@@ -12,8 +12,8 @@ Output
 
 '''
 # Imports
-from median_ratio_method import geo_mean, median_ratio_standardization, median_ratio_standardization_, median_ratio_standardization_log
-from boruta_py import BorutaPy  # forked master boruta_py
+from utils.median_ratio_method import geo_mean, median_ratio_standardization, median_ratio_standardization_, median_ratio_standardization_log
+from utils.boruta.boruta import BorutaPy  # forked master boruta_py
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import RFECV, RFE
 

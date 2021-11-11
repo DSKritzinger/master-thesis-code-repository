@@ -1,7 +1,11 @@
+'''
+The following function is a copy of the FCBF filter feature-selection
+algorithm from jundongl/sckit-feature, with a specific fix implemented
+(see comment below).
+'''
+
 from skfeature.utility.mutual_information import su_calculation
 import numpy as np
-# The below function has been copied from jundongl/scikit-feature with a fix implemented (see comment below)
-
 
 def fcbf(X, y, **kwargs):
     """

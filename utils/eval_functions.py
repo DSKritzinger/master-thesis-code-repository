@@ -1,49 +1,63 @@
 '''
-The following code is a set of functions created in order to evaluate the results of the first phase (filter algorithms) feature selection process.
+The following module consists of a set of functions aimed at the evaluation
+of the developmental procedure (10 fold x 5 cross-validation) generated 
+feature sets.
 
-This code consist of various functions, however, the most important are:
-- Tanimoto Index: Determines similarity between two feature subsets
-- Average Tanimoto Index: Determines stability of method across k-folds
+Functions:
+- Tanimoto Index: Determines similarity between two feature subsets.
+- Average Tanimoto Index: Determines stability of a feature selection 
+                          method across k-folds.
 - Intersystem Average Tanimoto Index: Determines similarity between different methods
 - Predictive ability: Determine the predictive abilities of the selected features for a varity of classifiers in terms of sensitivity and specificity
 
 This specific code is setup for the preprocessing of the real gc6-74 matched datasets.
 '''
 # Imports
-import pandas as pd
 import numpy as np
-import scipy
-import math
-import statistics as st
-import pickle
-import time
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from sklearn.model_selection import RepeatedStratifiedKFold, train_test_split
-from sklearn.metrics import recall_score, accuracy_score, precision_score, roc_curve, precision_recall_curve
+from sklearn.model_selection import RepeatedStratifiedKFold
+from sklearn.metrics import recall_score, accuracy_score, precision_score, roc_curve
 from imblearn.over_sampling import SMOTE, BorderlineSMOTE, SVMSMOTE
 # Standardization
 from median_ratio_method import geo_mean, median_ratio_standardization
 
 # Functions
 
-# Tanimoto Index: Determines similarity between two feature subsets
-
+# Tanimoto Index
 
 def tanimoto_index(idx_1, idx_2):
+    '''
+    Calculates tanimoto index similarity measure
+    between two feature sets.
+    Input:
+        idx_1 - list of identified gene indices
+        idx_2 - list of identified gene indices
+    Output:
+          - tanimoto_index (similarity between feature sets)
+    '''
     n_1 = len(idx_1)    # the number of elements in feature set 1
     n_2 = len(idx_2)    # the number of elements in feature set 2
     # the number of elements that is in both feature sets 1 and 2
     n_12 = sum(np.isin(idx_1, idx_2))
-    # tanimoto distance (according to P.Somol, et al.)
+    # tanimoto distance (according to P.Somol, et al. 2010)
     tanimoto_distance = (n_1 + n_2 - 2*n_12)/(n_1 + n_2 - n_12)
     # tanimoto index (according to P.Somol, et al. 2010)
     tanimoto_index = 1 - tanimoto_distance
     return tanimoto_index
 
-# Average Tanimoto Index: Determines stability of method across k-folds
+# Average Tanimoto Index
 
 
 def average_tanimoto_index(selected_set_list):
+    '''
+    Calculates average tanimoto index, a measure of stability between
+    repeated list of generated feature sets.
+    Input:
+        selected_set_list - list of generated feature sets from repeated
+                            feature set generatinon procedure.
+    Output:
+          - average_tanimoto_index (stability)
+    '''
     num_subsets = len(selected_set_list)
     sum_2 = 0
     for i in range(0, num_subsets-1):
@@ -55,26 +69,40 @@ def average_tanimoto_index(selected_set_list):
     ATI = (sum_2*2)/(num_subsets*(num_subsets-1))
     return ATI
 
-# Intersystem Average Tanimoto Index: Determines similarity between different methods
-
-
-def intersystem_ATI(selected_set_list_1, selected_set_list_2):
-    num_subset_1 = len(selected_set_list_1)
-    num_subset_2 = len(selected_set_list_2)
-    sum_2 = 0
-    for i in range(0, num_subset_1):
-        sum_1 = 0
-        for j in range(0, num_subset_2):
-            sum_1 += tanimoto_index(selected_set_list_1[i], selected_set_list_2[j])
-        sum_2 += sum_1
-    # modified intersystem average tanimoto index (G. Aldehim, 2017)
-    mIATI = sum_2/(num_subset_1*num_subset_2)
-    return mIATI
-
-# Determine the predictive abilities of the selected features for a varity of classifiers
+# Predictive performance
 
 
 def predictive_ability(classifiers, subset_list, X, y, repeats, splits, preprocessing):
+    '''
+    Evaluates predictive performance of generated feature sets over k-folds,
+    through multiple metrics.
+    Input:
+        classifiers - dictionary of classifiers to be used for predictive 
+                      performance result generation.
+        subset_list - list of k-fold generated feature sets.
+        X - numpy array (shape - n_samples, n_features) of gene count data.
+        y - numpy array (shape - n_samples, 1)
+        repeats - cross-validation number of repeats
+        splits - cross-valiation number of folds
+        preprocessing - string representing preprocessing method to be implemented, 
+                        mrm - median ratio method
+                        mrm_log - median ratio method with log normalization pre
+                                  feature selection.
+                        mrm_loglog - median ratio method with log normalization 
+                                     pre and post feature selection. 
+    Output:
+    predict_list, acc_list, sensitivity_list, specificity_list, fpr_list, tpr_list,
+          predict_list - list of list with each sample predicted outcome
+          acc_list - list of accuracies generated from each cv fold loop's feature sets
+          sensitivity_list - list of sensitivities generated from each cv fold loop's 
+                             feature sets
+          specifivity_list - list of specificities generated from each cv fold loop's 
+                             feature sets      
+          fpr_list - list of false positive rates generated from each cv fold loop's 
+                     feature sets  
+          tpr_list - list of true positive rates generated from each cv fold loop's
+                     feature sets              
+    '''
 
     print("Preprocessing procedure employed: " + preprocessing)
     i = 0    # CV fold counter
