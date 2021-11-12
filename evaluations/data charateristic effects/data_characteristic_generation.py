@@ -1,9 +1,11 @@
 '''
-The following script runs the Boruta-RFE feature selection model to generate
-outputs for the evaluation of the data characteristic effects on the model.
+The following script implements the Boruta-RFE feature selection approach.
+The implementation is specifically focussed on the generation of feature
+sets for the different temporal sample groupings.
 
-
-This specific code is setup for the preprocessing of the GC6-74 datasets.
+As the cross-validation procedure is computationally intensive, a multiprocessing 
+approach was implemented for use on a high performance compute cluster (many core 
+system for ideal performance).
 '''
 # imports
 ############################################################
@@ -15,10 +17,8 @@ import time
 import concurrent.futures
 import pickle
 
-# local
+# local imports
 from boruta_rfe_fs import BorutaRFE
-
-# functions
 
 # %%
 # import data
@@ -66,7 +66,6 @@ temp_train_indices = np.concatenate([temp_case_indices, temp_control_indices])
 # generation function
 ############################################################
 
-
 def data_characteristic_generation(train_idx):
     # split temporal training group
     temp_idx = np.intersect1d(train_idx, temp_train_indices, return_indices=True)[0]
@@ -81,7 +80,6 @@ def data_characteristic_generation(train_idx):
 # %%
 # main loop
 ############################################################
-
 
 def main():
     # initialize

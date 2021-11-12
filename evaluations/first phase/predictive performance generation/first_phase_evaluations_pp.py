@@ -1,10 +1,6 @@
 '''
-The following code aims to provide the evaluation results of the first phase (filter algorithms) of the feature selection process.
-
-Specifically for the filter stage development process.
-
-This code evaluates the filter algorithms in terms of their:
-- predictive performance: in terms of sensitivity and specificity
+The following script evaluates the predictive performance of the individual
+first phase algorithm's selected features.
 '''
 # %%
 # Imports
@@ -255,26 +251,6 @@ elif preproc == "mrm_log_log":
     all_effectiveness = pa["All"]
 else:
     sys.exit()
-
-    # Initialize output variables
-
-
-# all_subset = list(range(0, X.shape[1]))
-# all_subset_list = [all_subset]*(num_repeats*num_splits)
-#
-# print('ALL predictive ability')
-# all_effectiveness = predictive_ability(
-#     classifiers, all_subset_list, X_train, y_train, num_repeats, num_splits, preproc)
-
-# # %%
-# # Random Features
-# import random
-# random_subset_list = random.sample(list(range(0, X.shape[1])),threshold_feats)
-# random_subset_list
-# print('ALL predictive ability')
-# random_effectiveness = predictive_ability(
-#     classifiers, random_subset_list, X_train, y_train, num_repeats, num_splits, preproc)
-
 
 # %%
 # Ranker selected feature

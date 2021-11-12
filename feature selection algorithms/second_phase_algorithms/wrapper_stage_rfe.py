@@ -8,19 +8,13 @@ As the cross-validation procedure is computationally intensive, a multiprocessin
 approach was implemented for use on a high performance compute cluster (many core 
 system for ideal performance).
 '''
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import FunctionTransformer
+# Imports
 import pandas as pd
 import numpy as np
-
-from sklearn.preprocessing import LabelEncoder
-from sklearn.model_selection import RepeatedStratifiedKFold
-
 import concurrent.futures
 import time
 import pickle
 # Feature Selection methods
-# Scikit-learning
 from skfeature.function.similarity_based import fisher_score
 from skfeature.function.statistical_based import chi_square
 from skfeature.function.similarity_based import reliefF
@@ -38,7 +32,11 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import make_scorer
 from sklearn.metrics import recall_score
 
+# Preprocessing
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import RepeatedStratifiedKFold
 from sklearn.preprocessing import FunctionTransformer
+from sklearn.pipeline import Pipeline
 # %%
 ################################################################################################
 # Functions
@@ -207,7 +205,6 @@ for i in range(0, (num_repeats*num_splits)):
 #                                 Import Boruta Selected Features
 ################################################################################################
 # boruta
-# boruta_pickle_directory = 'D:/Thesis_to_big_file/xboruta outputsx/'
 boruta_pickle_directory = 'C:/Users/Daniel/Documents/Thesis/Python Code/boruta_rfe_data_effects/'
 
 # n_est| iter | perc | depth | alpha
@@ -292,7 +289,7 @@ input_set = selected_list  # idx_ensemble_list
 
 # %%
 ################################################################################################
-#                                  Feature Selection Main function
+#                                          Main function
 ################################################################################################
 
 def rfe_wrapper_stage(train_idx, selected_features):

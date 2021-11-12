@@ -8,35 +8,27 @@ features selection methods
 import pandas as pd
 import numpy as np
 import pickle
-import time
-import sys
 import dill
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer
 # Evaluation functions
-from eval_functions import intersystem_ATI, average_tanimoto_index, tanimoto_index, predictive_ability
-from sklearn.metrics import auc
+from eval_functions import average_tanimoto_index, predictive_ability
+from sklearn.metrics import auc, recall_score
 from sklearn.metrics import make_scorer
 # Data Prep functions
 from sklearn.preprocessing import LabelEncoder
-from median_ratio_method import geo_mean, median_ratio_standardization, median_ratio_standardization_, median_ratio_standardization_log
+from median_ratio_method import median_ratio_standardization_, median_ratio_standardization_log
 from sklearn.preprocessing import StandardScaler
-# Feature Selection Methods
-from skfeature.function.similarity_based import fisher_score
-from skfeature.function.statistical_based import chi_square
-from skfeature.function.similarity_based import reliefF
-from skfeature.function.information_theoretical_based import MRMR
-from skfeature.function.statistical_based import gini_index
 # Machine Learning Classifiers
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC, LinearSVC
-from sklearn.naive_bayes import GaussianNB, ComplementNB
+from sklearn.naive_bayes import GaussianNB
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
 from sklearn.ensemble import VotingClassifier
 # Boruta
 from boruta_py import BorutaPy  # forked master boruta_py
-from sklearn.model_selection import RepeatedStratifiedKFold, train_test_split
+from sklearn.model_selection import RepeatedStratifiedKFold
 # Visualizations
 from matplotlib import pyplot as plt
 import seaborn as sns
@@ -182,153 +174,6 @@ def data_tables(fs_pa, classifiers_, data_name):
     return all_filter_m
 
 
-'''
-- boxplot_filter
-input:  fs_pa =  feature selection methods predictive ability outputs
-        classifiers = dictionary of classifiers to be used
-        data_name = results to be graphed (accuracy, sensitivity, specificity, auc)
-        figure_size = size of figure to be output
-ouptput: boxplot of relevant filters
-'''
-
-
-def boxplot_filter(fs_pa, classifiers_, data_name, sel_classifiers, axis, ordering=None):
-    # fs_pa = fs_pa_raw_sm
-    # classifiers_ = classifiers
-    # data_name = "Sensitivity"
-    # sel_classifiers = selected_classifiers
-    # axis = ax2
-    # initialize empty dataframes for input to graph
-    classifier_names = list(classifiers_.keys())
-    all_filter = pd.DataFrame(columns=classifier_names)
-    # extract
-    for pa_keys, pa_values in fs_pa.items():
-        # accuracy
-        if data_name == "Accuracy":
-            ind_filter = pd.DataFrame(
-                pa_values[1][:-2], columns=classifier_names).assign(Filters=pa_keys)
-            all_filter = all_filter.append(ind_filter, ignore_index=True)
-        elif data_name == "Sensitivity":
-            # sensitivity
-            ind_filter = pd.DataFrame(
-                pa_values[2][:-2], columns=classifier_names).assign(Filters=pa_keys)
-            all_filter = all_filter.append(ind_filter, ignore_index=True)
-        elif data_name == "Specificity":
-            # specificity
-            ind_filter = pd.DataFrame(
-                pa_values[3][:-2], columns=classifier_names).assign(Filters=pa_keys)
-            all_filter = all_filter.append(ind_filter, ignore_index=True)
-        elif data_name == "AUC":
-            # fpr
-            fpr_list = pa_values[-2]
-            # tpr
-            tpr_list = pa_values[-1]
-            # extract auc for all Classifiers
-            auc_clf_list = auc_clf_compiler(classifiers_, fpr_list, tpr_list)
-            ind_filter = pd.DataFrame(
-                auc_clf_list, columns=classifier_names).assign(Filters=pa_keys)
-            all_filter = all_filter.append(ind_filter, ignore_index=True)
-    # select classifiers to be displayed
-    if "Filters" not in sel_classifiers:
-        sel_classifiers.append("Filters")
-    sel_filter = all_filter[sel_classifiers]
-    sel_classifiers.pop()
-    # melt all_filter dataframe for input to graph
-    all_filter_m = sel_filter.melt(
-        id_vars=['Filters'], var_name='Classifiers', value_name=data_name)
-    ax = sns.boxplot(ax=axis, x=all_filter_m['Filters'], y=all_filter_m[data_name],
-                     hue=all_filter_m['Classifiers'], order=ordering, fliersize=2, linewidth=0.8)
-    sns.despine()
-    ax.set(ylim=(-0.05, 1.04))
-    ax.grid(axis='y')
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=20)
-    # Put the legend out of the figure
-    #ax.legend(bbox_to_anchor=(1.02, 0.5), loc="center left")
-    return ax
-
-
-def radar_plot(fs_pa, classifiers_, data_name, sel_classifiers, axis):
-    # initialize empty dataframes for input to graph
-    # ordered list of classifier names
-    classifier_names = list(classifiers_.keys())
-    mean_filter = pd.DataFrame(columns=classifier_names)
-    # extract
-    for pa_keys, pa_values in fs_pa.items():
-        # accuracy
-        if data_name == "accuracy":
-            # accuracy
-            ind_filter = pd.DataFrame(pa_values[1], columns=classifier_names)
-            # mean
-            mean_filter = mean_filter.append(ind_filter.iloc[-2], ignore_index=True)
-        elif data_name == "sensitivity":
-            # sensitivity
-            ind_filter = pd.DataFrame(pa_values[2], columns=classifier_names)
-            # mean
-            mean_filter = mean_filter.append(ind_filter.iloc[-2], ignore_index=True)
-        elif data_name == "specificity":
-            ind_filter = pd.DataFrame(pa_values[3], columns=classifier_names)
-            # mean
-            mean_filter = mean_filter.append(ind_filter.iloc[-2], ignore_index=True)
-        elif data_name == "auc":
-            # fpr
-            fpr_list = pa_values[-2]
-            # tpr
-            tpr_list = pa_values[-1]
-            # extract auc for all Classifiers
-            auc_clf_list = auc_clf_compiler(classifiers_, fpr_list, tpr_list)
-            ind_filter = pd.DataFrame(auc_clf_list, columns=classifier_names).mean(axis=0)
-            mean_filter = mean_filter.append(ind_filter, ignore_index=True)
-    # set data for input to graph
-    data_all = mean_filter
-    # select classifiers to be displayed
-    data = data_all[sel_classifiers]
-    # create colour pallete for graph lines
-    palette = plt.cm.get_cmap("Set2", len(data)+1)
-    # initialize axis
-
-    for i in range(0, len(data)):
-        # Create background
-        # number of variable
-        sel_classifiers = selected_classifiers
-        categories = sel_classifiers
-        N = len(categories)
-        # determine angle of each axis
-        angles = [n/float(N) * 2 * np.pi for n in range(N)]
-        angles += angles[:1]
-        angles
-        # set first axis to be on top
-        axis.set_theta_offset(np.pi / 2)
-        axis.set_theta_direction(-1)
-
-        # Draw one axe per variable + add labels labels yet
-        axis.set_xticks(angles[:-1])
-        axis.set_xticklabels(categories)
-        axis.tick_params(axis='x', pad=10)
-
-        # Draw ylabels
-        axis.set_rlabel_position(0)
-
-        axis.set_rticks([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9], [
-            "0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9"])
-        rlabels = axis.get_ymajorticklabels()
-        for label in rlabels:
-            label.set_color('gray')
-
-        if data_name == 'auc':
-            axis.set_ylim(0.3, 1)
-        else:
-            axis.set_ylim(0, 1)
-
-        colour = palette(i)
-
-        values = data.iloc[i].values.tolist()
-        values += values[:1]
-        axis.plot(angles, values, color=colour, marker=".",
-                  linestyle='solid', label=list(fs_pa.keys())[i])
-        axis.legend(loc='upper left', bbox_to_anchor=(1.25, 1))
-    return axis
-
-
 def reduce_features(solution, features):
     selected_elements_indices = np.where(solution == 1)[0]
     reduced_features_ind = features[selected_elements_indices]
@@ -377,7 +222,6 @@ def gmean(y_true, y_predicted):
     error = np.sqrt(sensitivity*specificity)
     return error
 
-
 geometric_mean = make_scorer(gmean, greater_is_better=True)
 
 # ga evaluation pipelines
@@ -412,30 +256,6 @@ pipeline_RF = Pipeline(pipe_se_RF)
 # Combinations of estimator pipelines in voting classifier
 voting_classifier_pipeline_combo = VotingClassifier(estimators=[('SVM_rbf', pipeline_SVMrbf), ('NB', pipeline_NB), ('KNN', pipeline_KNN), ('SVM_lin', pipeline_SVMlin)],
                                                     voting='soft')
-
-
-def ci_plot_out(input, color, legend, axis, only_mean=False):
-    scores_list = []
-    for i in range(0, 50):
-        scores = input[i]
-        scores_list.append(scores)
-    pd.DataFrame(scores_list).transform(np.sort)
-
-    scores_5 = pd.DataFrame(scores_list).transform(np.sort).iloc[4]
-    scores_25 = pd.DataFrame(scores_list).transform(np.sort).iloc[24]
-    scores_45 = pd.DataFrame(scores_list).transform(np.sort).iloc[44]
-
-    axis.set_xlabel("Number of Generations")
-    axis.set_ylabel("Cross validation Score")
-    if only_mean == False:
-        axis.plot(range(1, len(scores_5) + 1), scores_5, linestyle=':', color=color)
-        axis.plot(range(1, len(scores_45) + 1), scores_45, linestyle=':', color=color)
-        axis.plot(range(1, len(scores_25) + 1), scores_25, color=color, label=legend)
-        axis.fill_between(range(1, len(scores_5) + 1), scores_5, scores_45, alpha=0.3)
-        axis.legend()
-    else:
-        axis.plot(range(1, len(scores_5) + 1), scores_25, color=color, label=legend)
-        axis.legend()
 
 
 def ci_plot(input, color, legend):

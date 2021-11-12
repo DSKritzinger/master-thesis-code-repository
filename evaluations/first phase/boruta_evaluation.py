@@ -1,5 +1,5 @@
 '''
-The following code aims to provide the evaluation results of the boruta all relevant feature selection method
+The following code aims to provide the evaluation results of the boruta all relevant feature selection method.
 '''
 # %%
 # Imports

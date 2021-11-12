@@ -1,30 +1,22 @@
 '''
-The following code aims to provides an evaluation of the effect of the data type characteristics on the
-selected feature selection process, i.e., Boruta-RFE.
-
-The main characteristics to consider is:
-- Data temporality
-- Effect of sample locations
+The following code aims to provide the evaluation results of the Boruta-RFE
+feature selection method on the different temporal groupings.
 '''
-
 # %%
 # Imports
-from eval_functions import intersystem_ATI, average_tanimoto_index, tanimoto_index
 import pandas as pd
 import numpy as np
 import pickle
-import time
 from sklearn.pipeline import Pipeline
 # Evaluation functions
-from eval_functions import predictive_ability
+from eval_functions import predictive_ability, average_tanimoto_index
 from sklearn.metrics import auc
-from sklearn.metrics import make_scorer
 # Data Prep functions
 from sklearn.preprocessing import LabelEncoder
 # Machine Learning Classifiers
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC, LinearSVC
-from sklearn.naive_bayes import GaussianNB, ComplementNB
+from sklearn.naive_bayes import GaussianNB
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
 # Graphing
@@ -32,11 +24,8 @@ import seaborn as sns
 from matplotlib import pyplot as plt
 # Evaluation
 from sklearn.model_selection import RepeatedStratifiedKFold
-# local
-from result_eval_functions import *
+
 # classes
-
-
 class Mypipeline(Pipeline):
     @property
     def coef_(self):
@@ -45,90 +34,77 @@ class Mypipeline(Pipeline):
     @property
     def feature_importances_(self):
         return self._final_estimator.feature_importances_
+
+# Classifier details
+classifier_names = {
+    'KNN': KNeighborsClassifier(n_jobs=-1),
+    'SVM (lin)': LinearSVC(dual=False),
+    'SVM (rbf)': SVC(kernel="rbf"),
+    'NB': GaussianNB(),
+    'RF': RandomForestClassifier(n_jobs=-1),
+    'XGBoost': XGBClassifier(n_jobs=-1)
+}
+
+classifiers = {
+    'KNN': KNeighborsClassifier(n_jobs=1),
+    'SVM_linear': LinearSVC(dual=False),
+    'SVM_rbf': SVC(kernel="rbf"),
+    'GaussianNB': GaussianNB(),
+    'RF': RandomForestClassifier(n_jobs=1),
+    'XGBoost': XGBClassifier(n_jobs=1)
+}
 # %%
 # Import datasets
- '''##############################################Choose############################################'''
- filename = 'ge_raw_24'
- '''################################################################################################'''
- directory = "C:/Users/Daniel/Google Drive/Postgraduate/Thesis/Method Development/Developmental sets/"
- # Import dataset
- _data = pd.read_csv(directory+filename+'.csv', sep=',')
+'''##############################################Choose############################################'''
+filename = 'ge_raw_24'
+'''################################################################################################'''
+directory = "C:/Users/Daniel/Google Drive/Postgraduate/Thesis/Method Development/Developmental sets/"
+# Import dataset
+_data = pd.read_csv(directory+filename+'.csv', sep=',')
 
- # Extract labels, sample id's and count data from imported data
- labels = _data.loc[:, 'label']
- labels
- # For GC6-74
- sample_info = _data.loc[:, :"before_diagnosis_group"]  # First 8 columns are sample information
- count_data = _data.loc[:, "7SK":]
- ################################################################################################
+# Extract labels, sample id's and count data from imported data
+labels = _data.loc[:, 'label']
+labels
+# For GC6-74
+sample_info = _data.loc[:, :"before_diagnosis_group"]  # First 8 columns are sample information
+count_data = _data.loc[:, "7SK":]
+################################################################################################
+# %%
+# Initialize data for input into feature selection and classification
+X = count_data.to_numpy()  # count matrix numpy array
+y_categorical = labels.to_numpy().reshape(len(labels),)  # labels numpy array
+# Change categorical labels to binary (controls - 0 and cases - 1)
+Label_Encoder = LabelEncoder()
+y = np.abs(Label_Encoder.fit_transform(y_categorical) - 1)
+# Initialize variables
+X_train = X
+y_train = y
+# %%
+################################################################################################
+# CV procedure variables
+################################################################################################
+num_splits = 10  # number of folds
+num_repeats = 5  # number of repeats
+rskf = RepeatedStratifiedKFold(n_splits=num_splits, n_repeats=num_repeats, random_state=0)
+
+'''
+Important to note the random_state of the train_test_split function as well as the random_state and splitting criteria of the RepeatedStratifiedKFold
+function for future use.
+
+These criteria are essentially the data splitting criteria.
+'''
+
+# initialize lists
+kf_train_idxcs = []
+kf_test_idxcs = []
+
+for kf_train_index, kf_test_index in rskf.split(X_train, y_train):
+    kf_train_idxcs.append(kf_train_index)
+    kf_test_idxcs.append(kf_test_index)
  # %%
- # Initialize data for input into feature selection and classification
- X = count_data.to_numpy()  # count matrix numpy array
- y_categorical = labels.to_numpy().reshape(len(labels),)  # labels numpy array
- # Change categorical labels to binary (controls - 0 and cases - 1)
- Label_Encoder = LabelEncoder()
- y = np.abs(Label_Encoder.fit_transform(y_categorical) - 1)
- # Initialize variables
- X_train = X
- y_train = y
- # %%
  ################################################################################################
- # CV procedure variables
+ #   Load generated feature sets
  ################################################################################################
- num_splits = 10  # number of folds
- num_repeats = 5  # number of repeats
- rskf = RepeatedStratifiedKFold(n_splits=num_splits, n_repeats=num_repeats, random_state=0)
-
- '''
- Important to note the random_state of the train_test_split function as well as the random_state and splitting criteria of the RepeatedStratifiedKFold
- function for future use.
-
- These criteria are essentially the data splitting criteria.
- '''
-
- # initialize lists
- kf_train_idxcs = []
- kf_test_idxcs = []
-
- for kf_train_index, kf_test_index in rskf.split(X_train, y_train):
-     kf_train_idxcs.append(kf_train_index)
-     kf_test_idxcs.append(kf_test_index)
- # %%
- ################################################################################################
- #   Load method outputs
- ################################################################################################
-#  pickle_directory = 'C:/Users/Daniel/Documents/Thesis/Python Code/boruta_rfe_data_effects/'
-# # Pickle load first phase outputs
-# # n_est| iter | perc | depth | alpha
-# # 'auto', 250, 100, 7, 0.01
-# with open(pickle_directory+'ge_raw_6_boruta_filter_stage_105_16', 'rb') as f:
-#     boruta_6 = pickle.load(f)
-# # n_est| iter | perc | depth | alpha
-# # 'auto', 250, 100, 7, 0.01
-# with open(pickle_directory+'ge_raw_12_boruta_filter_stage_105_auto_7_001_250', 'rb') as f:
-#     boruta_12 = pickle.load(f)
-# # n_est| iter | perc | depth | alpha
-# # 'auto', 250, 100, 7, 0.01
-# with open(pickle_directory+'ge_raw_18_boruta_filter_stage_105_auto_7_001_250', 'rb') as f:
-#     boruta_18 = pickle.load(f)
-# # n_est| iter | perc | depth | alpha
-# # 'auto', 250, 100, 7, 0.01
-# with open(pickle_directory+'ge_raw_24_boruta_filter_stage_105_auto_7_001_250', 'rb') as f:
-#     boruta_24 = pickle.load(f)
-#
-#  # Pickle load wrapper outputs
-#  with open(pickle_directory+'ge_raw_6_rfe_wrapper_stage_bor_RF_mrm_0_make_scorer(gmean)_final', 'rb') as f:
-#       boruta_rfe_6 = pickle.load(
-#           f)
-#  with open(pickle_directory+'ge_raw_12_rfe_wrapper_stage_bor_RF_mrm_0_make_scorer(gmean)_final', 'rb') as f:
-#      boruta_rfe_12 = pickle.load(
-#          f)
-#  with open(pickle_directory+'ge_raw_18_rfe_wrapper_stage_bor_RF_mrm_0_make_scorer(gmean)_final', 'rb') as f:
-#      boruta_rfe_18 = pickle.load(
-#          f)
-#  with open(pickle_directory+'ge_raw_24_rfe_wrapper_stage_bor_RF_mrm_0_make_scorer(gmean)_final', 'rb') as f:
-#      boruta_rfe_24 = pickle.load(
-#          f)
 # %%
 pickle_directory = ""
 with open(pickle_directory+'ge_raw_24_BorutaRFE_data_characteristic_results_6', 'rb') as f:
@@ -205,48 +181,49 @@ data_effects_selected_features = {
     '0-24':{"one":boruta_rfe_24[2],"two":boruta_rfe_24[0]},
 }
 
-# Generate
+# Generate External Predictive Performance Results
 ################################################################################################
 # %%
-# data_effects_external = {}
-# for k, v in data_effects_selected_features.items():
-#     print(k)
-#     data_effects_external[k] = k
-#     '''Stage 1'''
-#     input_1 = data_effects_selected_features[k]['one']
-#
-#     '''Stage 2'''
-#     input_2 = data_effects_selected_features[k]['two']
-#
-#     results_list = []
-#     for j in range(1,len(input_1[0])):
-#         ''' Grab top x number of features '''
-#         number_features = j
-#         top_list = []
-#         for i in range(0, 50):
-#             # identify the top {{number_features}} features for each fold
-#             ranking = input_2[i].ranking_
-#             top = input_1[i][ranking <=number_features]
-#             top_list.append(top)
-#         top_list[0]
-#         preproc = 'ens'
-#         input = top_list
-#         result = predictive_ability(
-#             classifiers, top_list, X_train, y_train, num_repeats, num_splits, preproc)
-#         results_list.append(result)
-#     data_effects_external[k] = results_list
+data_effects_external = {}
+for k, v in data_effects_selected_features.items():
+    print(k)
+    data_effects_external[k] = k
+    '''Stage 1'''
+    input_1 = data_effects_selected_features[k]['one']
+
+    '''Stage 2'''
+    input_2 = data_effects_selected_features[k]['two']
+
+    results_list = []
+    for j in range(1,len(input_1[0])):
+        ''' Grab top x number of features '''
+        number_features = j
+        top_list = []
+        for i in range(0, 50):
+            # identify the top {{number_features}} features for each fold
+            ranking = input_2[i].ranking_
+            top = input_1[i][ranking <=number_features]
+            top_list.append(top)
+        top_list[0]
+        preproc = 'ens'
+        input = top_list
+        result = predictive_ability(
+            classifiers, top_list, X_train, y_train, num_repeats, num_splits, preproc)
+        results_list.append(result)
+    data_effects_external[k] = results_list
 
 # %%
+# Save External Predictive Performance Results
 # with open('temporal_predictive_performance_per_feature_results', 'wb') as f:
 #     pickle.dump(data_effects_external, f)
-# Grab results
+# Grab External Predictive Performance Results
 with open('temporal_predictive_performance_per_feature_results', 'rb') as f:
     temp_pp_per_feature = pickle.load(
         f)
 # %%
 ''' ----------------------------- Comparison Tests ----------------------------- '''
 
-
+# Set figure styles
 def set_style():
     sns.set(context="paper", font='serif', style="white", rc={"xtick.bottom": True,
                                                               "xtick.labelsize": "x-small",
@@ -264,24 +241,7 @@ gr = (np.sqrt(5)-1)/2
 
 selected_classifiers = ['KNN', 'SVM (lin)', 'SVM (rbf)', 'NB', 'RF']
 
-classifier_names = {
-    'KNN': KNeighborsClassifier(n_jobs=-1),
-    'SVM (lin)': LinearSVC(dual=False),
-    'SVM (rbf)': SVC(kernel="rbf"),
-    'NB': GaussianNB(),
-    'RF': RandomForestClassifier(n_jobs=-1),
-    'XGBoost': XGBClassifier(n_jobs=-1)
-}
-
-classifiers = {
-    'KNN': KNeighborsClassifier(n_jobs=1),
-    'SVM_linear': LinearSVC(dual=False),
-    'SVM_rbf': SVC(kernel="rbf"),
-    'GaussianNB': GaussianNB(),
-    'RF': RandomForestClassifier(n_jobs=1),
-    'XGBoost': XGBClassifier(n_jobs=1)
-}
-
+# Combine internal and external predictive performance results
 per_feature_comparison = {
     '0-6': {"external":temp_pp_per_feature["0-6"],"internal":boruta_rfe_CV_6[0]},
     '0-12':{"external":temp_pp_per_feature["0-12"],"internal":boruta_rfe_CV_12[0]},
@@ -711,246 +671,3 @@ average_tanimoto_index(boruta_rfe_6[2])
 average_tanimoto_index(boruta_rfe_12[2])
 average_tanimoto_index(boruta_rfe_18[2])
 average_tanimoto_index(boruta_rfe_24[2])
-# %%
-# Similarity
-# ------------------------------------------------------------
-
-
-# %%
-# Select preprocessing procedure to evaluate
-'''##############################################Choose############################################'''
-preproc = "mrm"  # "mrm", "mrm_log"
-# %%
-repeats_string = str(num_repeats)
-splits_string = str(num_splits)
-# Confirm dataset strata
-len(X_train)
-len(y_train)
-sum(y_train == 0)
-sum(y_train == 1)
-# %%
-# Initialize classifiers to be used
-classifier_names = {
-    'KNN': KNeighborsClassifier(n_jobs=-1),
-    'SVM (lin)': LinearSVC(dual=False),
-    'SVM (rbf)': SVC(kernel="rbf"),
-    'NB': GaussianNB(),
-    'RF': RandomForestClassifier(n_jobs=-1),
-    'XGBoost': XGBClassifier(n_jobs=-1)
-}
-
-classifiers = {
-    'KNN': KNeighborsClassifier(n_jobs=1),
-    'SVM_linear': LinearSVC(dual=False),
-    'SVM_rbf': SVC(kernel="rbf"),
-    'GaussianNB': GaussianNB(),
-    'RF': RandomForestClassifier(n_jobs=1),
-    'XGBoost': XGBClassifier(n_jobs=1)
-}
-
-# %%
-################################################################################################
-# -------------------------------------------Evaluate-------------------------------------------
-################################################################################################
-# 6
-boruta_output_6 = boruta_6
-rfe_output_6 = boruta_rfe_6
-# extract selected feature lists from boruta
-confirmed_list_6, tentative_list_6, selected_list_6 = extract_boruta_list(boruta_output, kf_train_idxcs, X)
-
-# %%
-# 12
-boruta_output_12 = boruta_12
-rfe_output_12 = boruta_rfe_12
-# extract selected feature lists from boruta
-confirmed_list_12, tentative_list_12, selected_list_12 = extract_boruta_list(boruta_output, kf_train_idxcs, X)
-
-# %%
-# 18
-boruta_output_18 = boruta_18
-rfe_output_18 = boruta_rfe_18
-# extract selected feature lists from boruta
-confirmed_list_18, tentative_list_18, selected_list_18 = extract_boruta_list(boruta_output, kf_train_idxcs, X)
-# %%
-# 24
-boruta_output_24 = boruta_24
-rfe_output_24 = boruta_rfe_24
-# extract selected feature lists from boruta
-confirmed_list_24, tentative_list_24, selected_list_24 = extract_boruta_list(boruta_output, kf_train_idxcs, X)
-
-# %%
-################################################################################################
-#                                        RESULTS GENERATION
-################################################################################################
-'''Stage 1'''
-input_1 = selected_list
-'''Stage 2'''
-input_2 = rfe_output
-# %%
-len(input_1[0])
-len(input_2[0][0].ranking_)
-# %%
-input_2[1][2]
-input_1[2][input_2[0][2].ranking_ <= 1]
-input_2[0][2].ranking_
-# %%
-
-''' Predictive Performance Generation'''
-results_list = []
-for j in range(1,len(input_1[0])):
-    ''' Grab top x number of features '''
-    number_features = j
-    top_list = []
-    for i in range(0, 50):
-        # identify the top {{number_features}} features for each fold
-        ranking = input_2[0][i].ranking_
-        top = input_1[i][ranking <=number_features]
-        top_list.append(top)
-    top_list[0]
-    preproc = 'ens'
-    input = top_list
-    result = predictive_ability(
-        classifiers, top_list, X_train, y_train, num_repeats, num_splits, preproc)
-    results_list.append(result)
-# %%
-''' Stability Generation'''
-
-# results_list = []
-# for j in range(1, len(input_1[0])):
-#     ''' Grab top x number of features '''
-#     number_features = j
-#     top_list = []
-#     for i in range(0, 50):
-#         # identify the top {{number_features}} features for each fold
-#         ranking = input_2[0][i].ranking_
-#         top = input_1[i][ranking <= number_features]
-#         top_list.append(top)
-#     top_list[0]
-#     preproc = 'ens'
-#     input = top_list
-#
-#     result = average_tanimoto_index(top_list)
-#     results_list.append(result)
-# results_list
-# ge_raw_6_rfe_wrapper_stage_ens_50_RF_mrm_stability_range = results_list
-# %%
-################################################################################################
-#                                              RESULTS
-################################################################################################
-# boruta_rfe_6_pp_results = results_list
-# len(boruta_rfe_6_pp_results)
-# boruta_rfe_12_pp_results = results_list
-# len(boruta_rfe_12_pp_results)
-# boruta_rfe_18_pp_results = results_list
-# len(boruta_rfe_18_pp_results)
-# boruta_rfe_24_pp_results = results_list
-# len(boruta_rfe_24_pp_results)
-# # save predictive performance results
-# temporal_pp = {
-#     "6": boruta_rfe_6_pp_results,
-#     "12": boruta_rfe_12_pp_results,
-#     "18": boruta_rfe_18_pp_results,
-#     "24": boruta_rfe_24_pp_results
-# }
-# with open(pickle_directory + filename + '_temporal_predictive_performance_per_feature_results', 'wb') as f:
-#     pickle.dump(temporal_pp, f)
-# Grab results
-with open(pickle_directory + filename + '_temporal_predictive_performance_per_feature_results', 'rb') as f:
-    temp_pp_per_feature = pickle.load(
-        f)
-# %%
-''' ----------------------------- Comparison Tests ----------------------------- '''
-
-
-def set_style():
-    sns.set(context="paper", font='serif', style="white", rc={"xtick.bottom": True,
-                                                              "xtick.labelsize": "x-small",
-                                                              "ytick.left": True,
-                                                              "ytick.labelsize": "x-small",
-                                                              "legend.fontsize": "x-small",
-                                                              "ytick.major.size": 2,
-                                                              "xtick.major.size": 2})
-
-
-fig_width = 5.52
-fig_height_scale = 1.2
-# set golden ratio values
-gr = (np.sqrt(5)-1)/2
-
-selected_classifiers = ['KNN', 'SVM (lin)', 'SVM (rbf)', 'NB', 'RF']
-# %%
-zoom1 = 35
-zoom2 = 0
-set_style()
-fig_width = 5.8
-fig_height_scale = 0.8
-fig, (ax2) = plt.subplots(1, figsize=(fig_width, gr*fig_width*fig_height_scale))
-# Internal
-
-input = rfe_output_18[0]
-scores_list = []
-for i in range(0, 50):
-    scores = input[i].grid_scores_
-    scores_list.append(scores)
-pd.DataFrame(scores_list)
-
-# crop results to include at least 4 results per number of features
-cut_off_dataframe = pd.DataFrame(scores_list).transform(np.sort).loc[:, pd.DataFrame(
-    scores_list).transform(np.sort).isnull().sum() <= (pd.DataFrame(scores_list).shape[0] - 3)]
-
-scores_5 = np.nanpercentile(cut_off_dataframe, q=10, axis=0)[zoom2:zoom1]
-scores_25 = np.nanmean(cut_off_dataframe, axis=0)[zoom2:zoom1]
-scores_45 = np.nanpercentile(cut_off_dataframe, q=90, axis=0)[zoom2:zoom1]
-
-ax2.plot(range(0, len(scores_5)), scores_5, linestyle=':', color="C9")
-ax2.plot(range(0, len(scores_45)), scores_45, linestyle=':', color="C9")
-ax2.plot(range(0, len(scores_25)), scores_25, color="C9", label='Internal CV')
-ax2.fill_between(range(0, len(scores_5)), scores_5, scores_45, alpha=0.3, color="C9")
-
-# External
-input_ext = temp_pp_per_feature["18"]
-geomean_list = []
-sensitivity_list = []
-specificity_list = []
-geomean_list.append(np.zeros(len(classifier_names)))
-sensitivity_list.append(np.zeros(len(classifier_names)))
-specificity_list.append(np.zeros(len(classifier_names)))
-for i in range(0, len(input_ext)):
-    sensitivity = pd.DataFrame(input_ext[i][2], columns=classifier_names.keys())
-    sensitivity_list.append(np.nanmean(sensitivity, axis=0))
-    specificity = pd.DataFrame(input_ext[i][3], columns=classifier_names.keys())
-    specificity_list.append(np.nanmean(specificity, axis=0))
-    geomean = np.nanmean(np.sqrt(sensitivity*specificity), axis=0)
-    geomean_list.append(geomean)
-
-for key in selected_classifiers:
-    ax2.plot(range(0, len(input_ext)+1),
-             pd.DataFrame(geomean_list, columns=classifier_names)[key], label=key)
-ax2.grid()
-ax2.set_ylim(-0.03, 0.9)
-ax2.set_xlabel("Number of Features")
-sns.despine()
-ax2.legend()
-
-ax2.set_title('RF based RFE')
-# plt.savefig("C:/Users/Daniel/Google Drive/Postgraduate/Thesis/Thesis Figures/EnsembleRFEInternalVSExternal.png",
-#             bbox_inches="tight", dpi=1000)
-# %%
-# Combine graphs to identify optimal approach
-'''
-1. Follow the process: Run boruta-rfe, check internal results
-2. Consider differences in internal results between the temporal datasets (sensitivity, specificity, gmean)
-3. Consider external predictive performance differences between results (sensitivity, specificity, gmean)
-4. Determine effect of temporal results on cut-off
-5. Zoom in on selected features and the similarity between them, i.e. the features selected, the differences in perfomance on different data temporal subsets
-
-Take the features at a specified cut-off (based on the internal results) for each of the Boruta-RFE outputs, run them on the
-'''
-# %%
-''' Only internal results '''
-fig_width = 5.8
-fig_height_scale = 2.5
-
-
-fig, axs = plt.subplots(4, 2, figsize=(fig_width, gr*fig_width*fig_height_scale))
-fig.subplots_adjust(hspace=.25)

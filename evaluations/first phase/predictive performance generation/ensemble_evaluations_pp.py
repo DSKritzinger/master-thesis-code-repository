@@ -1,10 +1,6 @@
 '''
-The following code aims to provide the evaluation results of the first phase (filter algorithms) of the feature selection process.
-
-Specifically for the filter stage ensemble evaluation process
-
-This code evaluates the filter algorithms in terms of their:
-- predictive performance: in terms of sensitivity and specificity
+The following script evaluates the predictive performance of the ensembled
+filter algorithm's selected features.
 '''
 # %%
 # Imports
@@ -258,7 +254,7 @@ finish = time.perf_counter()
 
 print(f'Finished in {round(finish-start, 2)} second(s)')
 # %%
-# Save filter predictive performance results
+# Save predictive performance results
 repeats_string = str(num_repeats)
 splits_string = str(num_splits)
 with open(filename + '_' + preproc + '_' + splits_string + repeats_string + '_predperf_ensemble', 'wb') as f:

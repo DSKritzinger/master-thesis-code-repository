@@ -1,9 +1,6 @@
 '''
-The following script runs the Boruta-RFE feature selection model to generate
-outputs for the final test set evaluation.
-
-
-This script is setup for the interchangeable evaluation of the ACS and GC6-74 datasets.
+The following code aims to provide the evaluation results of the Boruta-RFE
+feature selection method on the different test and validation datasets.
 '''
 # imports
 ############################################################
@@ -23,7 +20,7 @@ from boruta_rfe_fs import BorutaRFE
 from boruta_rfecv_fs import BorutaRFECV
 
 # Standardization
-from median_ratio_method import geo_mean, median_ratio_standardization
+from median_ratio_method import  median_ratio_standardization
 
 # Machine Learning Classifiers
 from sklearn.neighbors import KNeighborsClassifier
@@ -295,142 +292,7 @@ gc6_first_phase_selected_features = count_data_train.iloc[:, selected_feat].colu
 "C1QC" in gc6_first_phase_selected_features
 gc6_first_phase_selected_features
 # %%
-''' ------------------------------------------------------------------------------------------------------- '''
-''' ACS Original '''
-# prepare data
-############################################################
-# training
-_data_acs_training["time_to_diagnosis_group"].value_counts()
-labels_acs_train = _data_acs_training.loc[:, 'label']
-# First 8 columns are sample information
-sample_info_acs_train = _data_acs_training.loc[:, :"time_to_diagnosis_group"]
-count_data_acs_train = _data_acs_training.loc[:, "A1BG":]
-
-X_acs_train = count_data_acs_train.to_numpy()
-
-Label_Encoder = LabelEncoder()
-y_categorical_acs_train = labels_acs_train.to_numpy().reshape(len(labels_acs_train),)
-y_acs_train = np.abs(Label_Encoder.fit_transform(y_categorical_acs_train) - 1)
-y_acs_train
-# testing
-labels_acs_test = _data_acs_testing.loc[:, 'label']
-# First 8 columns are sample information
-sample_info_acs_test = _data_acs_testing.loc[:, :"time_to_diagnosis_group"]
-count_data_acs_test = _data_acs_testing.loc[:, "A1BG":]
-
-X_acs_test = count_data_acs_test.to_numpy()
-
-Label_Encoder = LabelEncoder()
-y_categorical_acs_test = labels_acs_test.to_numpy().reshape(len(labels_acs_test),)
-y_acs_test = np.abs(Label_Encoder.fit_transform(y_categorical_acs_test) - 1)
-# %%
-# Generate features
-selector_output_acs, final_feat_acs, selected_feat_acs, X_train_check_acs = BorutaRFE(
-    X_acs_train, y_acs_train)
-# %%
-selector_output_acs_cv, final_feat_acs_cv, selected_feat_acs_cv, X_train_check_acs_cv = BorutaRFECV(
-    X_acs_train, y_acs_train)
-# %%
-# Internal results
-fig, ax = plt.subplots()
-
-ax.set_xlabel("Number of features")
-ax.set_ylabel("Internal Cross-validation\nPredictive Performance")
-
-ax.plot(range(0, len(np.insert(selector_output_acs_cv.grid_scores_, 0, 0))),
-        np.insert(selector_output_acs_cv.grid_scores_, 0, 0))
-# %%
-fig, ax = plt.subplots()
-
-ax.set_xlabel("Number of features")
-ax.set_ylabel("Internal Cross-validation\nPredictive Performance")
-ax.plot(range(1, len(selector_output_acs_cv.grid_scores_) + 1), selector_output_acs_cv.grid_scores_)
-# %%
-# External results
-
-# Generation
-
-# select feature set cut-off
-
-''' Based on internal predictive performance results, the cut-off would be probably be
-around 50 features, however based on the developmental procedure results the procedure is
-capable of strong predictive performance reduction up to the final 5 features even, thus
-this will be used for the test set results. '''
-
-# calculate selected feature set predictive performance
-
-# parameters
-number_features = 5
-selected_features = selected_feat_acs
-ranking = selector_output_acs.ranking_
-subset_list = selected_features[ranking <= number_features]
-
-
-preprocessing = "mrm"
-
-classifiers = {
-    'KNN': KNeighborsClassifier(n_jobs=1),
-    'SVM_linear': LinearSVC(dual=False),
-    'SVM_rbf': SVC(kernel="rbf"),
-    'GaussianNB': GaussianNB(),
-    'RF': RandomForestClassifier(n_jobs=1),
-    'XGBoost': XGBClassifier(n_jobs=1)
-}
-# %%
-output = single_eval(classifiers, subset_list, X_acs_train,
-                     y_acs_train, X_acs_test, y_acs_test, preprocessing)
-# %%
-# sensitivity
-np.array(output[2])
-# %%
-# specificity
-np.array(output[3])
-# %%
-# geometric mean of sensitivity and specificity
-np.sqrt(np.array(output[2])*np.array(output[3]))
-# %%
-# Temporal group analysis
-total_temp = {"0-180": 0, "181-360": 0, "361-540": 0, "541-720": 0, "(Missing)": 0}
-num_identified_as = {"0-180": 0, "181-360": 0, "361-540": 0, "541-720": 0, "(Missing)": 0}
-
-sample_info_acs_test['time_to_diagnosis_group'] = sample_info_acs_test['time_to_diagnosis_group'].fillna(
-    '(Missing)')
-len(output[0][3])
-len(sample_info_acs_test)
-for temp in "0-180", "181-360", "361-540", "541-720", "(Missing)":
-    # totals
-    temporal_group = sample_info_acs_test[sample_info_acs_test['time_to_diagnosis_group'] == temp]
-    total_temp[temp] += len(temporal_group)
-    # correctly identified
-    identified_as_cases = sample_info_acs_test.loc[output[0][2] == 1]
-    # split identified as cases
-    num_identified_as[temp] += len(
-        identified_as_cases[identified_as_cases['time_to_diagnosis_group'] == temp])
-
-for classifier_num in range(0, 5):
-    print('Results for classifier ' + classifier_names[classifier_num])
-    pp_dict_per_temp_group = {"0-6": 0, "6-12": 0, "12-18": 0, "18-24": 0, "(Missing)": 0}
-    for temp in ["0-6", "6-12", "12-18", "18-24", "(Missing)"]:
-        # totals
-        temporal_group = sample_info_test[sample_info_test['before_diagnosis_group'] == temp]
-        total_temp[temp] += len(temporal_group)
-        # correctly identified
-        identified_as_cases = sample_info_test.loc[output[0][classifier_num] == 1]
-        # split identified as cases
-        num_identified_as[temp] += len(
-            identified_as_cases[identified_as_cases['before_diagnosis_group'] == temp])
-        pp_dict_per_temp_group[temp] = (
-            len(identified_as_cases[identified_as_cases['before_diagnosis_group'] == temp])/len(temporal_group))
-    print(pp_dict_per_temp_group)
-
-
-total_temp
-num_identified_as
-# %%
-# Selected feature names
-count_data_acs_train.iloc[:, subset_list].columns
-# %%
-''' ACS adapted '''
+''' ACS dataset '''
 # prepare data
 ############################################################
 
