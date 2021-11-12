@@ -1,9 +1,12 @@
 '''
-The following script creates a RFE wrapper feature selection algorithm and embeddeds it
-into a cross-validation loop capable of being implemented with multiprocessing
+The following script implements the second phase RFE feature selection method.The 
+implementation is specifically focussed on the generation of feature sets for the 
+hybrid method developmental procedure (10 fold x 5 cross-validation), thus various 
+variables can be tested.
 
-
-This specific code is setup for the preprocessig of the real gc6-74 datasets.
+As the cross-validation procedure is computationally intensive, a multiprocessing 
+approach was implemented for use on a high performance compute cluster (many core 
+system for ideal performance).
 '''
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer
@@ -26,7 +29,6 @@ from skfeature.function.statistical_based import gini_index
 from sklearn.feature_selection import RFECV, RFE
 # Estimators
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
 from sklearn.svm import LinearSVC
 # Standardization
 from utils.median_ratio_method import geo_mean, median_ratio_standardization, median_ratio_standardization_, median_ratio_standardization_log
@@ -34,22 +36,24 @@ from utils.median_ratio_method import geo_mean, median_ratio_standardization, me
 from sklearn.preprocessing import StandardScaler
 # Metrics
 from sklearn.metrics import make_scorer
-from sklearn.metrics import recall_score, accuracy_score, precision_score, roc_curve, precision_recall_curve
+from sklearn.metrics import recall_score
 
 from sklearn.preprocessing import FunctionTransformer
-
-from skfeature.utility.mutual_information import su_calculation
 # %%
 ################################################################################################
 # Functions
 # rank filter method output score indices
 '''
 input:  ranker_score_lists = ranker filter scores (order: fisher, chi, reliefF, mim, gini) and fold sample indices
-ouptput: ordered by score, ranker filter method indices (order: fisher, chi, reliefF, mim, gini)
+output: ordered by score, ranker filter method indices (order: fisher, chi, reliefF, mim, gini)
 '''
 
 
 def rank_rank_dict(ranker_score_dict):
+    '''
+    Function for the rank sorting of the first phase ranker
+    generated feature sets.
+    '''
     # extract features from rank_rank() output
     fisher_score_list = ranker_score_dict['Fisher-Score']
     chi_score_list = ranker_score_dict['Chi-Square']
@@ -93,15 +97,28 @@ ouptput: 'top-k' ranker filter method indices (order: fisher, chi, reliefF, mim,
 
 
 def rank_thres(ranked_ranker_lists, threshold):
+    '''
+    Function for the thresholding of he rank sorted first phase 
+    ranker generated feature sets.
+    '''
     list_th_out = []
     for list in ranked_ranker_lists:
         list_th = [item[0:threshold] for item in list]
         list_th_out.append(list_th)
     return list_th_out
 
+# Preprocessing class initialization
+
+class Mypipeline(Pipeline):
+    @property
+    def coef_(self):
+        return self._final_estimator.coef_
+
+    @property
+    def feature_importances_(self):
+        return self._final_estimator.feature_importances_
+
 ############################################Import Data#########################################
-
-
 # %%
 filename = 'ge_raw_12'
 # Import dataset
@@ -218,25 +235,23 @@ def extract_boruta_list(boruta_output):
 print('# of selected estimators: "auto"')
 confirmed_list, tentative_list, selected_list = extract_boruta_list(boruta_out)
 
-
 # %%
-# Set estimators to evaluate
+################################################################################################
+#                                        Evaluation Parameters
+################################################################################################
+# Estimators
 estimators = {
     'SVM_linear': LinearSVC(dual=False),
     'RF': RandomForestClassifier(n_jobs=1, class_weight='balanced', n_estimators=500)
 }
-# for analysis variables
-# RFE number of selected features
-num_features = 1
-# estimator
 estimator_name = 'RF'
-# preprocessig
+# Number of selected features
+num_features = 1
+# Preprocessing
 preprocessing = "mrm"  # mrm_log_log
 # SMOTE
 smote_var = 0  # 1 - yes, 0 - no
 # Evaluation Measure
-# Gemean
-
 
 def gmean(y_true, y_predicted):
     sensitivity = recall_score(y_true, y_predicted)
@@ -244,21 +259,14 @@ def gmean(y_true, y_predicted):
     error = np.sqrt(sensitivity*specificity)
     return error
 
-
 geometric_mean = make_scorer(gmean, greater_is_better=True)
-
-
 eval_measure = geometric_mean  # "recall" (sensitivity), specificity, roc_auc
 
-# %%
-################################################################################################
-#                                  Feature Selection Main function
-################################################################################################
-# Create Main Function Pipeline Options
+# Pipeline combinations
+# Initialize
 mrstand = FunctionTransformer(median_ratio_standardization_)
 mrstand_log = FunctionTransformer(median_ratio_standardization_log)
-# build rfecv function with pipelines and test results in evaluations pp
-# first test here
+
 pipe_sse_input = [('standardizer', mrstand),
                   ('scaler', StandardScaler()),
                   ('estimator', estimators[estimator_name])]
@@ -269,19 +277,7 @@ pipe_se_input = [('standardizer', mrstand),
                  ('estimator', estimators[estimator_name])]
 pipe_sle_input = [('standardizer_log', mrstand_log),
                   ('estimator', estimators[estimator_name])]
-# %%
-
-
-class Mypipeline(Pipeline):
-    @property
-    def coef_(self):
-        return self._final_estimator.coef_
-
-    @property
-    def feature_importances_(self):
-        return self._final_estimator.feature_importances_
-
-
+# Pipelines
 # standardization, scaling, estimator
 pipeline_sse = Mypipeline(pipe_sse_input)
 # standardization, normalization (log), scaling, estimator
@@ -291,13 +287,19 @@ pipeline_se = Mypipeline(pipe_se_input)
 # standardization, normalization (log), estimator
 pipeline_sle = Mypipeline(pipe_sle_input)
 
+# First phase selected features
+input_set = selected_list  # idx_ensemble_list
+
+# %%
+################################################################################################
+#                                  Feature Selection Main function
+################################################################################################
 
 def rfe_wrapper_stage(train_idx, selected_features):
     # create train and test data folds
     X_train_f = X_train[train_idx]
     y_train_f = y_train[train_idx]
 
-    # Preprocessing (mrm, mrm_log_log)
     if preprocessing == "mrm" and estimator_name == 'SVM_linear':
         print("Applying: " + preprocessing + " and Scaling")
 
@@ -334,10 +336,6 @@ def rfe_wrapper_stage(train_idx, selected_features):
 
 
 # %%
-# previous stage selected features
-# ---------------------------------
-input_set = selected_list  # idx_ensemble_list
-# ---------------------------------
 ################################################################################################
 #                                 Unparallelization Main function
 ################################################################################################

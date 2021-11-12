@@ -1,19 +1,11 @@
 '''
-The following script is the Boruta-RFE feature selection algorithm.
-
-Input
-    X_train - training data (numpy array)
-    y_train - training labels (numpy array)
-Output
-    selector_output - final fitted RFECV model
-    final_feat - final selected feature set based on CV loop
-    selected_feat - boruta phase selected features output
-    X_train - to confirm input and outputs are correct
-
+Boruta-RFECV hybrid feature selection method implemention. The aim of
+this implementation is to generate the final RFECV model from which 
+internal predictive performance results can be measured.
 '''
 # Imports
-from median_ratio_method import geo_mean, median_ratio_standardization, median_ratio_standardization_, median_ratio_standardization_log
-from boruta_py import BorutaPy  # forked master boruta_py
+from utils.median_ratio_method import median_ratio_standardization_
+from utils.boruta.boruta import BorutaPy  # forked master boruta_py
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import RFECV, RFE
 
@@ -39,6 +31,18 @@ eval_measure = geometric_mean
 
 
 def BorutaRFECV(X_train, y_train):
+    '''
+    Boruta-RFECV hybrid feature selection method implemention.
+
+    Input:
+        X_train - numpy array (shape - n_samples, n_features) of gene count data
+        y_train - numpy array (shape - n_samples, 1) of sample target outcomes
+    Output:
+        selector_output - final fitted RFECV model
+        final_feat - final RFE phase selected feature (1) in the ranking process
+        selected_feat - boruta phase selected features
+        X_train - validation of data input
+    '''
     start = time.perf_counter()
     # Prepare data
     # --------------------------------------------------------

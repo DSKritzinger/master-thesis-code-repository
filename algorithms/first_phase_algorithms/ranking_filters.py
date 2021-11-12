@@ -1,20 +1,23 @@
 '''
-The following code implements the ranker feature selection methods, namely
+The following script implements 5 seperate ranker feature selection methods consisting of:
     - ReliefF
     - Chi-squared
     - mRMR
-    - gini index
+    - Gini index
     - Fischer score
-These algorithms are implemented through multiprocessing to reduce computation time.
 
-This specific code is setup for the preprocessig of the real gc6-74 matched datasets.
+The implementation is specifically focussed on the generation of feature sets for
+the hybrid method developmental procedure (10 fold x 5 cross-validation).
+
+As the cross-validation procedure is computationally intensive, a multiprocessing 
+approach was implemented for use on a high performance compute cluster (many core 
+system for ideal performance).
 '''
-from sklearn.feature_selection import VarianceThreshold
 import pandas as pd
 import numpy as np
 
 from sklearn.preprocessing import LabelEncoder
-from sklearn.model_selection import RepeatedStratifiedKFold, train_test_split
+from sklearn.model_selection import RepeatedStratifiedKFold
 
 import concurrent.futures
 import time
@@ -29,7 +32,7 @@ from skfeature.function.statistical_based import gini_index
 # Scikit-learning
 from sklearn.feature_selection import mutual_info_classif
 # Standardization
-from median_ratio_method import geo_mean, median_ratio_standardization
+from median_ratio_method import  median_ratio_standardization_
 
 from skfeature.utility.mutual_information import su_calculation
 ################################################################################################
@@ -84,7 +87,7 @@ def feature_selection(train_idx):
     X_train_f = X_train[train_idx]
     y_train_f = y_train[train_idx]
     # If DESeq Evaluation
-    #X_train_f = np.round(median_ratio_standardization(X_train_f), 0)
+    X_train_f = np.round(median_ratio_standardization_(X_train_f), 0)
     # If normalization is required
     #X_train_f = np.log2(X_train_f+1)
     # Ranker methods

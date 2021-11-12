@@ -1,13 +1,16 @@
 '''
-The following code implements the ranker feature selection methods, namely
-    - ReliefF
-    - Chi-squared
-    - Fischer score
-    - Gini Index
+The following script implements an ensemble feature selection method consisting of:
+    - ReliefF,
+    - Chi-squared,
+    - Fischer score,
+    - Gini index.
 
-These algorithms are implemented through multiprocessing to reduce computation time.
+The implementation is specifically focussed on the generation of feature sets for
+the hybrid method developmental procedure (10 fold x 5 cross-validation).
 
-This specific code is setup for the preprocessig of the real gc6-74 datasets.
+As the cross-validation procedure is computationally intensive, a multiprocessing 
+approach was implemented for use on a high performance compute cluster (many core 
+system for ideal performance).
 '''
 # general imports
 import pandas as pd
@@ -20,7 +23,7 @@ import concurrent.futures
 import time
 import pickle
 # Standardization
-from utils.median_ratio_method import median_ratio_method import geo_mean, median_ratio_standardization, median_ratio_standardization_, median_ratio_standardization_log
+from utils.median_ratio_method import median_ratio_standardization
 
 # Feature Selection methods
 # Scikit feature
@@ -30,7 +33,6 @@ from skfeature.function.information_theoretical_based import MRMR
 from skfeature.function.similarity_based import fisher_score
 from skfeature.function.statistical_based import gini_index
 from sklearn.feature_selection import mutual_info_classif
-from skfeature.utility.mutual_information import su_calculation
 
 
 ################################################################################################

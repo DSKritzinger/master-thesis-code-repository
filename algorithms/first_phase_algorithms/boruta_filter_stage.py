@@ -1,12 +1,18 @@
 '''
-The following code implements all-relevant feature selection approach, i.e. Boruta
-'''
+The following script implements the all-relevant feature selection approach, Boruta.
+The implementation is specifically focussed on the generation of feature sets for
+the hybrid method developmental procedure (10 fold x 5 cross-validation).
 
+As the cross-validation procedure is computationally intensive, a multiprocessing 
+approach was implemented for use on a high performance compute cluster (many core 
+system for ideal performance).
+'''
+# imports
 import pandas as pd
 import numpy as np
 
 from sklearn.preprocessing import LabelEncoder
-from sklearn.model_selection import RepeatedStratifiedKFold, train_test_split
+from sklearn.model_selection import RepeatedStratifiedKFold
 
 import concurrent.futures
 import time
@@ -16,8 +22,8 @@ import pickle
 from boruta_py import BorutaPy  # forked master boruta_py
 from sklearn.ensemble import RandomForestClassifier
 # Standardization
-from median_ratio_method import geo_mean, median_ratio_standardization, median_ratio_standardization_, median_ratio_standardization_log
-################################################################################################
+from median_ratio_method import  median_ratio_standardization_
+############################################Import Data#########################################
 # %%
 directory = "C:/Users/Daniel/Google Drive/Postgraduate/Thesis/Method Development/Developmental sets/"
 filename = 'ge_raw_6'
@@ -30,7 +36,7 @@ labels = _data.loc[:, 'label']
 sample_info = _data.loc[:, :"before_diagnosis_group"]  # First 8 columns are sample information
 count_data = _data.loc[:, "7SK":]
 sum(labels == "case")
-############################################Import Data#########################################
+################################################################################################
 # %%
 # Initialize data for input into feature selection and classification
 X_train = count_data.to_numpy()  # count matrix numpy array
@@ -82,8 +88,6 @@ def boruta_all_relevance(train_idx):
 
     return boruta, train_idx
 
-
-# %%
 # %%
 ################################################################################################
 #                                  Parallelization Main function
@@ -129,32 +133,3 @@ def main():
 if __name__ == '__main__':
     main()
 
-
-# def boruta_all_relevance(train_idx):
-#     # create train and test data folds
-#     X_train_f = X_train[train_idx]
-#     y_train_f = y_train[train_idx]
-#     # DESeq
-#     X_train_f = np.round(median_ratio_standardization_(X_train_f), 0)
-#     # Define Boruta
-#     # Random Forest
-#     rf = RandomForestClassifier(n_jobs=-1, class_weight='balanced', max_depth=5)
-#     # Boruta
-#     boruta = BorutaPy(rf, n_estimators=500, verbose=2, random_state=1, max_iter=150)
-#     # Fit boruta
-#     boruta.fit(X_train_f, y_train_f)
-#
-#     return boruta
-#
-#
-# m = boruta_all_relevance(kf_train_idxcs[0])
-# m
-# m.support_
-# m.ranking_
-# m.n_features_
-# pd.DataFrame(m.importance_history_).loc[:,m.support_]
-# pd.DataFrame(m.importance_history_).iloc[5:20,1462:1470]
-# green_area = pd.DataFrame(X_train[kf_train_idxcs[0]]).columns[m.support_].to_list()
-# blue_area = pd.DataFrame(X_train[kf_train_idxcs[0]]).columns[m.support_weak_].to_list()
-# print('features in the green area:', green_area)
-# print('features in the blue area:', blue_area)

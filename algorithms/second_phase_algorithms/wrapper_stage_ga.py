@@ -1,25 +1,22 @@
 '''
-The following script creates a GA wrapper feature selection algorithm and embeddeds it
-into a cross-validation loop capable of being implemented with multiprocessing
+The following script implements the second phase GA feature selection method.The 
+implementation is specifically focussed on the generation of feature sets for the 
+hybrid method developmental procedure (10 fold x 5 cross-validation), thus various 
+variables can be tested.
 
-
-This specific code is setup for the preprocessig of the real gc6-74 datasets.
+As the cross-validation procedure is computationally intensive, a multiprocessing 
+approach was implemented for use on a high performance compute cluster (many core 
+system for ideal performance).
 '''
-
+# Imports
 import pandas as pd
 import numpy as np
-from matplotlib import pyplot as plt
-
-from sklearn.preprocessing import LabelEncoder
-from sklearn.model_selection import RepeatedStratifiedKFold
-
 import time
 import dill
 from pathos.multiprocessing import ProcessPool
 import pickle
 import random
 # Feature Selection methods
-# Scikit-learning
 from skfeature.function.similarity_based import fisher_score
 from skfeature.function.statistical_based import chi_square
 from skfeature.function.similarity_based import reliefF
@@ -43,20 +40,27 @@ from sklearn.metrics import make_scorer
 from sklearn.model_selection import cross_val_score
 from sklearn.metrics import recall_score, accuracy_score, precision_score, roc_curve, precision_recall_curve
 
+# Preprocessing
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import RepeatedStratifiedKFold
 from sklearn.preprocessing import FunctionTransformer
 from sklearn.pipeline import Pipeline
-from skfeature.utility.mutual_information import su_calculation
+
 # %%
 ################################################################################################
 # Functions
 # rank filter method output score indices
 '''
 input:  ranker_score_lists = ranker filter scores (order: fisher, chi, reliefF, mim, gini) and fold sample indices
-ouptput: ordered by score, ranker filter method indices (order: fisher, chi, reliefF, mim, gini)
+output: ordered by score, ranker filter method indices (order: fisher, chi, reliefF, mim, gini)
 '''
 
 
 def rank_rank_dict(ranker_score_dict):
+    '''
+    Function for the rank sorting of the first phase ranker
+    generated feature sets.
+    '''
     # extract features from rank_rank() output
     fisher_score_list = ranker_score_dict['Fisher-Score']
     chi_score_list = ranker_score_dict['Chi-Square']
@@ -100,12 +104,26 @@ ouptput: 'top-k' ranker filter method indices (order: fisher, chi, reliefF, mim,
 
 
 def rank_thres(ranked_ranker_lists, threshold):
+    '''
+    Function for the thresholding of he rank sorted first phase 
+    ranker generated feature sets.
+    '''
     list_th_out = []
     for list in ranked_ranker_lists:
         list_th = [item[0:threshold] for item in list]
         list_th_out.append(list_th)
     return list_th_out
 
+# Preprocessing class initialization
+
+class Mypipeline(Pipeline):
+    @property
+    def coef_(self):
+        return self._final_estimator.coef_
+
+    @property
+    def feature_importances_(self):
+        return self._final_estimator.feature_importances_
 
 ############################################Import Data#########################################
 # %%
@@ -193,9 +211,7 @@ for i in range(0, (num_repeats*num_splits)):
     ensembled_features = np.array(list(dict.fromkeys(ensembled_features)))
     # make list of every folds selected features
     idx_ensemble_list.append(ensembled_features)
-# %%
-# with open('idx_ensemble_list_8', 'wb') as f:
-#     pickle.dump(idx_ensemble_list, f)
+
 # %%
 ################################################################################################
 #                                 Import Boruta Selected Features
@@ -224,16 +240,14 @@ def extract_boruta_list(boruta_output):
         selected_list.append(np.array(selected))
     return confirmed_list, tentative_list, selected_list
 
-
+print('# of selected estimators: "auto"')
 confirmed_list, tentative_list, selected_list = extract_boruta_list(boruta_out16)
 
 # %%
 ################################################################################################
-#                          Define functions for use in Main Function
+#                                        Evaluation Parameters
 ################################################################################################
-# ------------------- Evaluation Functions -------------------
-# Evaluation Metric - Geometric mean of sensitivity and specificity
-
+# Evaluation Measure
 
 def gmean(y_true, y_predicted):
     sensitivity = recall_score(y_true, y_predicted)
@@ -241,12 +255,11 @@ def gmean(y_true, y_predicted):
     error = np.sqrt(sensitivity*specificity)
     return error
 
-
 geometric_mean = make_scorer(gmean, greater_is_better=True)
 eval_measure = geometric_mean
-# %%
-# ------------------- Evaluation Pipelines -------------------
-# Standardization transformer definitions
+
+# Pipeline combinations
+# Initialize
 mrstand = FunctionTransformer(median_ratio_standardization_)
 mrstand_log = FunctionTransformer(median_ratio_standardization_log)
 # Estimator Pipeline definitions
@@ -263,6 +276,7 @@ pipe_se_NB = [('standardizer', mrstand),
               ('estimator', GaussianNB())]
 pipe_se_RF = [('standardizer', mrstand),
               ('estimator', RandomForestClassifier())]
+# Pipelines
 # standardization, scaling, svm (rbf)
 pipeline_SVMrbf = Pipeline(pipe_sse_SVMrbf)
 # standardization, scaling, svm (rbf)
@@ -277,13 +291,13 @@ pipeline_RF = Pipeline(pipe_se_RF)
 voting_classifier_pipeline_combo = VotingClassifier(estimators=[('SVM_rbf', pipeline_SVMrbf), ('NB', pipeline_NB), ('KNN', pipeline_KNN)],
                                                     voting='soft')
 pipe = voting_classifier_pipeline_combo
-pipe
+
+# First phase selected features
+input_set = selected_list  # idx_ensemble_list
 # %%
 ################################################################################################
-#                                  Feature Selection Main function
+#                                          Main function
 ################################################################################################
-# ------------------- Multi-Fold Implementation Function -------------------
-
 
 def ga_wrapper_stage(train_idx, selected_features):
     # create train and test data folds
@@ -405,67 +419,63 @@ def ga_wrapper_stage(train_idx, selected_features):
         return fitness
 
 
-# parameters
-imp_weight = 0.3
-num_generations = 5
-sol_per_pop = 50
-num_parents_mating = np.uint8(sol_per_pop/2)
-num_genes = len(selected_features)
-parent_selection_type = "rws"  # "sus","rank"
-keep_parents = 1
-crossover_type = "uniform"  # "single_point","two_points"
-#crossover_probability = 0.8
-mutation_type = "random"
-mutation_probability = 0.1
-#mutation_percent_genes = 10
-gene_space = [0, 1]
+    # parameters
+    imp_weight = 0.3
+    num_generations = 5
+    sol_per_pop = 50
+    num_parents_mating = np.uint8(sol_per_pop/2)
+    num_genes = len(selected_features)
+    parent_selection_type = "rws"  # "sus","rank"
+    keep_parents = 1
+    crossover_type = "uniform"  # "single_point","two_points"
+    #crossover_probability = 0.8
+    mutation_type = "random"
+    mutation_probability = 0.1
+    #mutation_percent_genes = 10
+    gene_space = [0, 1]
 
-# set ga_instance variables with updated fitness function
-ga_instance = pygad.GA(num_generations=num_generations,
-                       sol_per_pop=sol_per_pop,
-                       num_parents_mating=num_parents_mating,
-                       fitness_func=fitness_func,
-                       num_genes=num_genes,
-                       parent_selection_type=parent_selection_type,
-                       keep_parents=keep_parents,
-                       crossover_type=crossover_type,
-                       # crossover_probability=crossover_probability,
-                       mutation_type=mutation_type,
-                       mutation_probability=mutation_probability,
-                       # mutation_percent_genes=mutation_percent_genes,
-                       gene_space=gene_space,
-                       on_start=on_start,
-                       on_fitness=on_fitness,
-                       on_parents=on_parents,
-                       on_crossover=on_crossover,
-                       on_mutation=on_mutation,
-                       on_generation=on_generation,
-                       on_stop=on_stop)
-# initialize output lists
-max_fit_pop_list = []
-max_fitness_list = []
-max_fit_n_feat_list = []
-max_fit_mean_pred_list = []
-avg_pop_n_feat_list = []
-avg_pop_mean_pred_list = []
-avg_pop_fitness_list = []
-num_selected_features_list = []
-pred_score_mean_list = []
+    # set ga_instance variables with updated fitness function
+    ga_instance = pygad.GA(num_generations=num_generations,
+                        sol_per_pop=sol_per_pop,
+                        num_parents_mating=num_parents_mating,
+                        fitness_func=fitness_func,
+                        num_genes=num_genes,
+                        parent_selection_type=parent_selection_type,
+                        keep_parents=keep_parents,
+                        crossover_type=crossover_type,
+                        # crossover_probability=crossover_probability,
+                        mutation_type=mutation_type,
+                        mutation_probability=mutation_probability,
+                        # mutation_percent_genes=mutation_percent_genes,
+                        gene_space=gene_space,
+                        on_start=on_start,
+                        on_fitness=on_fitness,
+                        on_parents=on_parents,
+                        on_crossover=on_crossover,
+                        on_mutation=on_mutation,
+                        on_generation=on_generation,
+                        on_stop=on_stop)
+    # initialize output lists
+    max_fit_pop_list = []
+    max_fitness_list = []
+    max_fit_n_feat_list = []
+    max_fit_mean_pred_list = []
+    avg_pop_n_feat_list = []
+    avg_pop_mean_pred_list = []
+    avg_pop_fitness_list = []
+    num_selected_features_list = []
+    pred_score_mean_list = []
 
-# run ga instance
-start = time.perf_counter()
-np.seterr(divide='ignore')
-random.seed(1)
-ga_instance.run()
-np.seterr(divide='warn')
+    # run ga instance
+    start = time.perf_counter()
+    np.seterr(divide='ignore')
+    random.seed(1)
+    ga_instance.run()
+    np.seterr(divide='warn')
 
-return ga_instance, max_fitness_list, max_fit_n_feat_list, max_fit_mean_pred_list, avg_pop_fitness_list, avg_pop_n_feat_list, avg_pop_mean_pred_list, max_fit_pop_list, train_idx
+    return ga_instance, max_fitness_list, max_fit_n_feat_list, max_fit_mean_pred_list, avg_pop_fitness_list, avg_pop_n_feat_list, avg_pop_mean_pred_list, max_fit_pop_list, train_idx
 
 # %%
-# previous stage selected features
-# ---------------------------------
-input_set = selected_list
-# ---------------------------------
 ################################################################################################
 #                                  Parallelization Main function
 ################################################################################################

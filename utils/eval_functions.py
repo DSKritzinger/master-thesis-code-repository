@@ -80,16 +80,16 @@ def predictive_ability(classifiers, subset_list, X, y, repeats, splits, preproce
         classifiers - dictionary of classifiers to be used for predictive 
                       performance result generation.
         subset_list - list of k-fold generated feature sets.
-        X - numpy array (shape - n_samples, n_features) of gene count data.
-        y - numpy array (shape - n_samples, 1)
+        X - numpy array (shape - n_samples, n_features) of gene count data
+        y - numpy array (shape - n_samples, 1) of sample target outcomes
         repeats - cross-validation number of repeats
         splits - cross-valiation number of folds
         preprocessing - string representing preprocessing method to be implemented, 
                         mrm - median ratio method
                         mrm_log - median ratio method with log normalization pre
-                                  feature selection.
+                                  feature selection
                         mrm_loglog - median ratio method with log normalization 
-                                     pre and post feature selection. 
+                                     pre and post feature selection 
     Output:
     predict_list, acc_list, sensitivity_list, specificity_list, fpr_list, tpr_list,
           predict_list - list of list with each sample predicted outcome

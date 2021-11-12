@@ -1,10 +1,14 @@
 '''
-The following code implements the subset feature selection methods, namely
+The following script implements 2 seperate subset feature selection methods consisting of:
     - CFS
     - FCBF
-These algorithms are implemented through multiprocessing to reduce computation time.
 
-This specific code is setup for the preprocessig of the real gc6-74 matched datasets.
+The implementation is specifically focussed on the generation of feature sets for
+the hybrid method developmental procedure (10 fold x 5 cross-validation).
+
+As the cross-validation procedure is computationally intensive, a multiprocessing 
+approach was implemented for use on a high performance compute cluster (many core 
+system for ideal performance).
 '''
 
 import pandas as pd
@@ -20,7 +24,7 @@ import pickle
 from skfeature.function.statistical_based import CFS
 from fcbf_func import fcbf
 # Standardization
-from median_ratio_method import geo_mean, median_ratio_standardization
+from median_ratio_method import  median_ratio_standardization_
 
 from skfeature.utility.mutual_information import su_calculation
 ################################################################################################
@@ -75,7 +79,7 @@ def feature_selection(train_idx):
     X_train_f = X_train[train_idx]
     y_train_f = y_train[train_idx]
     # If DESeq Evaluation
-    #X_train_f = np.round(median_ratio_standardization(X_train_f), 0)
+    X_train_f = np.round(median_ratio_standardization_(X_train_f), 0)
     # If normalization is required
     #X_train_f = np.log2(X_train_f+1)
     # Subset methods
@@ -119,20 +123,6 @@ def main():
             idx_fcbf_list.append(idx_fcbf)
 
             train_idx_list.append(train_idx)
-
-        # print(filename)
-        # results = [executor.submit(feature_selection, kf_train_idx)
-        #            for kf_train_idx in kf_train_idxcs]
-        #
-        # for f in concurrent.futures.as_completed(results):
-        #     idx_cfs, idx_fcbf = f.result()
-        #
-        #     i += 1
-        #     print("This is fold: ", i, "of", num_splits)
-        #     # FS selected features lists
-        #     # subset indexes
-        #     idx_cfs_list.append(idx_cfs)
-        #     idx_fcbf_list.append(idx_fcbf)
 
         finish = time.perf_counter()
 

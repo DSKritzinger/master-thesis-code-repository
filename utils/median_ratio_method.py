@@ -13,7 +13,8 @@ def geo_mean(x):
     '''
     Calculates geometric mean of input array.
     Input:
-        x - list of values
+        x -  numpy array (shape - 1, n_features)
+             of gene counts
     Output:
           - geometric mean of input array
     '''
