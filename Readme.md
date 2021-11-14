@@ -1,6 +1,6 @@
 # Machine Learning Prediction of Disease Progression using Gene Expression
 
-    The following code base contains the generation and evaluation scripts used to develop the Boruta-RFE hybrid feature selection method, aimed at the identification of minimal gene-signatures for TB progression prediction. 
+The following code base contains the generation and evaluation scripts used to develop the Boruta-RFE hybrid feature selection method, aimed at the identification of minimal gene-signatures for TB progression prediction. 
 
 ## Components
 
