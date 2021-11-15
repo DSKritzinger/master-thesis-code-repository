@@ -30,6 +30,6 @@ The code base also contains the prepared data used for this project, as well as 
 
 ## Running the scripts
 
-All code in the repository can be run, but does require environment setup. For the python code, a requirements.txt file has been added which will install all the necessary dependencies required to run the scripts. For the R code, if using Rstudio, the necessary packages will be recommended automatically.
+All code in the repository can be run, but does require environment setup. For the python code, a requirements.txt file has been added which lists all the necessary dependencies required to run the scripts. For the R code, if using Rstudio, the necessary packages will be recommended automatically.
 
 
