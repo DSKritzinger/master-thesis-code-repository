@@ -28,4 +28,8 @@ The codebase consist of four main folders, i.e., exploratory data analysis, feat
 
 The code base also contains the prepared data used for this project, as well as all generated results. Most results are in the form of "pickled" data, thus would have to be run in conjunction with the evaluations scripts to produce any visible results. 
 
+## Running the scripts
+
+All code in the repository can be run, but does require environment setup. For the python code, a requirements.txt file has been added which will install all the necessary dependencies required to run the scripts. For the R code, if using Rstudio, the necessary packages will be recommended automatically.
+
 
