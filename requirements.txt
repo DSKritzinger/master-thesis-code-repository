@@ -8,9 +8,9 @@ cycler==0.10.0
 Cython==0.29.16
 decorator==4.4.2
 defusedxml==0.6.0
-dill @ file:///home/conda/feedstock_root/build_artifacts/dill_1604312823872/work
+dill
 entrypoints==0.3
-imbalanced-learn @ file:///home/conda/feedstock_root/build_artifacts/imbalanced-learn_1591716883293/work
+imbalanced-learn
 importlib-metadata==1.5.0
 ipykernel==5.1.4
 ipython==7.13.0
@@ -31,7 +31,7 @@ jupyterlab==2.0.1
 jupyterlab-server==1.0.7
 jupyterthemes==0.20.0
 kiwisolver==1.1.0
-kneed @ file:///home/conda/feedstock_root/build_artifacts/kneed_1597304056973/work
+kneed
 lesscpy==0.13.0
 lxml==4.5.0
 MarkupSafe==1.1.1
@@ -45,7 +45,7 @@ nbconvert==5.6.1
 nbformat==5.0.4
 notebook==6.0.3
 numpy==1.18.1
-pandas @ file:///D:/bld/pandas_1602502982535/work
+pandas
 pandocfilters==1.4.2
 parso==0.6.2
 pathos==0.2.7
@@ -67,17 +67,17 @@ pywin32==227
 pywinpty==0.5.7
 PyYAML==5.3.1
 pyzmq==18.1.1
-scikit-learn @ file:///D:/bld/scikit-learn_1596546338654/work
+scikit-learn 
 scipy==1.4.1
-seaborn @ file:///home/conda/feedstock_root/build_artifacts/seaborn-base_1604238753550/work
+seaborn 
 Send2Trash==1.5.0
 six==1.14.0
 skfeature==1.0.0
 skrebate==0.6
-statsmodels @ file:///D:/bld/statsmodels_1604227174275/work
+statsmodels
 terminado==0.8.3
 testpath==0.4.4
-threadpoolctl @ file:///tmp/tmp79xdzxkt/threadpoolctl-2.1.0-py3-none-any.whl
+threadpoolctl
 tornado==6.0.4
 traitlets==4.3.3
 wcwidth==0.1.9
