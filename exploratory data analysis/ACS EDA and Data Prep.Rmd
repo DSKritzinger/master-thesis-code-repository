@@ -1,0 +1,672 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+# Packages
+library(DESeq2)
+library(edgeR)
+library(tidyverse)
+library("readxl")
+
+```
+##################################################################################################################################################
+# IMPORT SAMPLE INFO DATA
+##################################################################################################################################################
+```{r}
+# import data (combined training and testing dataset)
+raw_sample_data <- read_excel("C:/Users/Daniel/Google Drive/Postgraduate/Thesis/Data/ACS/GSE79362_series_matrix_cel.xlsx", sheet = "GSE79362_series_matrix_full")
+
+# set column types
+raw_sample_data$label <- as_factor(raw_sample_data$label)
+raw_sample_data$bin <- as_factor(raw_sample_data$bin)
+raw_sample_data$gender <- as_factor(raw_sample_data$gender)
+raw_sample_data$ethnicity <- as_factor(raw_sample_data$ethnicity)
+raw_sample_data$draw <- as_factor(raw_sample_data$draw)
+raw_sample_data$set <- as_factor(raw_sample_data$set)
+
+raw_sample_data
+```
+
+The ACS dataset originally consists of two seperate sets, a training and testing dataset, with samples described by their age, gender and ethnicity.Take note that the ACS dataset has been pre-cleaned in excel through the combination of study sample information and GEO available data.
+
+##################################################################################################################################################
+# SAMPLE INFO EDA 
+##################################################################################################################################################
+## High level inspection
+```{r}
+summary(raw_sample_data)
+```
+
+High level summary reveals 7 missing draw reads, 7 more missing 'pp_time_to_diagnosis' values than controls in the factor based columns. This is due to missing sample draw times for mainly two test set subjects.
+
+## Column level inspection
+
+Coloumns which possibly contain missing values other than the above mentioned, counts_sample_id, bin, age, subject_id.
+
+```{r}
+# Sample title
+n_distinct(raw_sample_data$counts_sample_id)
+```
+
+All different values
+
+```{r}
+# bin
+n_distinct(raw_sample_data$bin) 
+  # 32 different demographic bins
+sum(is.na(raw_sample_data$bin))
+  # no missing information in any of the bins
+unique(raw_sample_data$bin)
+  # bins named 1-32 representing groupings by age, gender, ethnicity, school of attendance, and presence or abscence of prior episodes of tuberculosis disease
+```
+
+From the demographic bin information, it would be interesting to see:
+  - The number of samples in each demographic bin
+
+```{r}
+# number of samples per demographic grouping
+raw_sample_data %>%
+  group_by(bin) %>%
+  tally() 
+```
+
+Do I want to know what every demographic bin represents?
+
+```{r}
+# age
+sum(is.na(raw_sample_data$bin))
+```
+
+no missing information
+
+```{r}
+# subject_id
+sum(is.na(raw_sample_data$subject_id))
+  # 7 missing subject_ids
+raw_sample_data[is.na(raw_sample_data$subject_id),] # missing subject id samples
+  # these samples also all contain the missing draws 
+n_distinct(raw_sample_data$subject_id)
+  # 143 subjects for the total 355 samples 
+```
+
+As the subject ids are obviously also a lot less than the number of samples:
+  - the number of samples per subject would be intersting to see
+  - the number of samples in each time category of "time_to_diagnosis"
+
+```{r}
+# Number of subject that have more than one sample
+raw_sample_data %>%
+  group_by(subject_id) %>%   
+  tally() %>%
+  .$n %>%
+  as.factor() %>%
+  summary()
+```
+
+This in an indication of the temporal depth of the dataset.
+
+```{r}
+# number of samples per "before diagnosis" group
+# create groupings
+raw_sample_data <- raw_sample_data %>% 
+  mutate(time_to_diagnosis_group = case_when(pp_time_to_diagnosis >= 0 & pp_time_to_diagnosis <= 180 ~ '0-180',
+                                             pp_time_to_diagnosis >180 & pp_time_to_diagnosis <=360 ~ '181-360', 
+                                             pp_time_to_diagnosis >360 & pp_time_to_diagnosis <=540 ~ '361-540', 
+                                             pp_time_to_diagnosis >540 & pp_time_to_diagnosis <=720 ~ '541-720', 
+                                             pp_time_to_diagnosis >720 ~ '> 720',
+                                             pp_time_to_diagnosis < 0 ~ 'post Rx'))
+
+raw_sample_data$time_to_diagnosis_group <- as.factor(raw_sample_data$time_to_diagnosis_group)
+# See group distribution
+summary(raw_sample_data)
+raw_sample_data
+```
+
+
+```{r}
+# check block
+raw_sample_data %>% 
+  filter(label == "case", !is.na(enrollment_to_TB_months)) %>%
+  summarise(mean = mean(enrollment_to_TB_months), sd = sd(enrollment_to_TB_months))
+
+raw_sample_data %>% 
+  filter(label == "case") %>%
+  group_by(draw) %>%
+  tally()
+
+raw_sample_data %>% 
+  filter(label == "case") %>%
+  group_by(subject_id) %>%
+  tally() %>%
+  summarise(mean = mean(n), sd = sd(n))
+
+#a <- raw_sample_data[raw_sample_data$label == "control",]
+#n_distinct(a$subject_id)
+
+sum(raw_sample_data$label == "case")
+
+raw_sample_data %>%
+  group_by(subject_id) %>%
+  filter(label == "control") %>%
+  tally()
+
+#raw_sample_data %>%
+#  filter(unique(raw_sample_data$subject_id) %in%  raw_sample_data$subject_id) 
+
+
+```
+
+```{r}
+# only training set
+raw_sample_data %>%
+  filter(set == "training") %>%
+  summary()
+```
+
+```{r}
+# only test set
+raw_sample_data %>%
+  filter(set == "testing") %>%
+  summary()
+```
+
+The missing sample information of the two subjects (two samples) in the test set makes it difficult to determine the 'time to diagnosis' of these samples. It is however still possible to determine the test set performance of the developed model on the current format test set. Thus, will create a "original test set" and "original training set", but also a slightly adapted training set and test set, which excludes the missing information samples, and ensures that the test set is representative of the full dataset.
+
+##################################################################################################################################################
+# TRAIN TEST SPLIT
+##################################################################################################################################################
+
+As the dataset have been split into testing and training set from the previous study, and as the split is available, this split will be made use of and an adapted set will be created, as mentioned previously.
+
+## Original split
+
+```{r}
+# original sample data
+original_sample_data <- raw_sample_data
+## original training data
+train_o_sample_info <- raw_sample_data %>%
+  filter(set == "training")
+train_o_sample_info
+## original testing data
+test_o_sample_info <- raw_sample_data %>%
+  filter(set == "testing")
+test_o_sample_info
+  
+```
+
+```{r}
+summary(train_o_sample_info)
+```
+
+```{r}
+summary(test_o_sample_info)
+```
+
+
+It is just necessary to note that the testing data has 7 samples which can not be grouped into time of diagnosis
+
+## Adapted split
+
+Due to the seven samples without draw time information, the ability of the validation set to represent the performance of the method is compromised, thus the adapted set aims to maintain as much of the original dataset splits as possible, however it will adapt the datasets in order to make the test set more representative of the entire dataset and in order to gain more informative test results from the test set.
+
+```{r}
+# adapted data
+adapted_sample_data <- raw_sample_data
+
+summary(adapted_sample_data)
+  # nothing has change yet (haha)
+```
+
+As is evident the dataset set consist of a 110:245 case-control ratio. For the adapted test and training set, we would like to continue with the ratio, ensuring the testing set is representative of the training data. By keeping the control samples consistent in each set, the case-control ratio can be changed by moving cases from the training set to the test set. 
+
+As from above, the training set has 166 controls vs the testing set which has 79, thus with the full dataset case-control ratio taken into account, the training set must consist of ~ 75 cases and the testing set of ~ 35. Thus it is necessary to move 23 (98 - 75) samples from the training set to the test set. These samples much be sampled randomly, but stratified by the "time to diagnosis" attribute in order to ensure representation.
+
+
+### Stratified training-testing selection
+```{r}
+
+df <- adapted_sample_data %>%
+  filter(set == "training", label == "case") %>% # only selecting from the training set cases
+  mutate(time_to_diagnosis_group = fct_explicit_na(time_to_diagnosis_group)) %>%
+  mutate(n = row_number()) %>% # create row number if you dont have one
+  select(n, everything()) # put 'n' at the front of the dataset
+
+set.seed(42)
+
+# select testing cases to be added to the test set from the training set
+sample_train_test <- df %>%
+  group_by(time_to_diagnosis_group) %>% # only necessary to stratify by time to diagnosis
+  sample_frac(0.22) # percentage require for 23 samples
+
+sample_train_cases <- anti_join(df, sample_train_test) # new training cases
+  
+```
+### Assess sets splits
+
+```{r}
+summary(sample_train_cases)
+```
+
+Number of cases are correct and the stratification seems to be done correctly.
+
+```{r}
+summary(sample_train_test)
+```
+
+Number of traing cases to be moved to the test set are correct (23) an stratification seems to be have done correctly.
+
+### Create adapted splits
+
+```{r}
+# adapted training set
+sample_train_adapt <- raw_sample_data %>%
+  filter(set == "training", label == "control") %>%
+  rbind(select(sample_train_cases,-n))
+
+sample_train_adapt
+summary(sample_train_adapt)
+
+```
+
+
+
+```{r}
+# adapted test set
+sample_test_adapt <- raw_sample_data %>%
+  filter(set == "testing") %>%
+  rbind(select(sample_train_test,-n))
+
+sample_test_adapt
+summary(sample_test_adapt)
+
+```
+
+##################################################################################################################################################
+# IMPORT COUNT DATA
+##################################################################################################################################################
+
+```{r}
+# Import data
+raw_ge_data_train <- read_excel("C:/Users/Daniel/Google Drive/Postgraduate/Thesis/Data/ACS/GSE79362_primarySampleJunctions.xlsx", sheet = 1)
+raw_ge_data_test <- read_excel("C:/Users/Daniel/Google Drive/Postgraduate/Thesis/Data/ACS/GSE79362_primarySampleJunctions.xlsx", sheet = 2)
+```
+
+##################################################################################################################################################
+# COUNT TABLE EDA
+##################################################################################################################################################
+
+## High level inspection
+
+```{r}
+# Explore high-level data
+## train
+dim(raw_ge_data_train) # 141939 x 270 (thus 254 samples)
+raw_ge_data_train
+```
+
+```{r}
+## test
+dim(raw_ge_data_test) # 136523 x 97 (thus 91 samples)
+raw_ge_data_test
+```
+
+As is evident the training and test set count data is firstly in the format of gene-splice counts, which have to be summed up to the gene level for this project. 
+
+Secondly, they have different numbers of transcript counts which is a result of the fact that the RNA-Seq was done in seperate batches. Thus it is necessary to only make use of the genes available in both datasets.
+
+Lastly, as the data was saved as an .xlsx file (excel file), excel changed gene names which look similar to  dates, into dates. This should be rectified.
+
+It should also be noted that certain count table rows have more than one gene assigned to them, for these rows, the genes must be split (and technically the genes of counts must be split between the genes)
+
+
+## Prepare data for use
+### Rectify gene names
+
+```{r}
+# training dataset
+raw_ge_data_train_ <- raw_ge_data_train %>% 
+  mutate(gene = recode(gene,                     
+                       "40968" = "MARCHF1", 
+                       "40969" = "MARCHF2",
+                       "40970" = "MARCHF3",
+                       "40972" = "MARCHF5",
+                       "40973" = "MARCHF6",
+                       "40974" = "MARCHF7",
+                       "40975" = "MARCHF8",
+                       "40976" = "MARCHF9",
+                       "41152" = "SEPTIN1",
+                       "41153" = "SEPTIN2",
+                       "41155" = "SEPTIN4",
+                       "41156" = "SEPTIN5",
+                       "41157" = "SEPTIN6",
+                       "41158" = "SEPTIN7",
+                       "41159" = "SEPTIN8",
+                       "41160" = "SEPTIN9",
+                       "41161" = "SEPTIN10",
+                       "41162" = "SEPTIN11"))
+raw_ge_data_train_
+```
+
+```{r}
+# testing dataset
+raw_ge_data_test_ <- raw_ge_data_test %>% 
+  mutate(gene = recode(gene,                     
+                       "40968" = "MARCHF1", 
+                       "40969" = "MARCHF2",
+                       "40970" = "MARCHF3",
+                       "40972" = "MARCHF5",
+                       "40973" = "MARCHF6",
+                       "40974" = "MARCHF7",
+                       "40975" = "MARCHF8",
+                       "40976" = "MARCHF9",
+                       "41152" = "SEPTIN1",
+                       "41153" = "SEPTIN2",
+                       "41155" = "SEPTIN4",
+                       "41156" = "SEPTIN5",
+                       "41157" = "SEPTIN6",
+                       "41158" = "SEPTIN7",
+                       "41159" = "SEPTIN8",
+                       "41160" = "SEPTIN9",
+                       "41161" = "SEPTIN10",
+                       "41162" = "SEPTIN11"))
+
+raw_ge_data_test_
+```
+
+### Split combined genes symbols
+
+As the transcript counts of combined gene symbols are assigned to technically all the genes referenced, when splitting the counts it is necessary to also split the counts between the referenced genes.
+
+```{r}
+# to check
+raw_ge_data_train_ %>%
+  rowwise() %>%
+  mutate(num_genes = (str_count(gene, ";") + 1), .after = "end") %>%
+  separate_rows(gene, sep = ";", convert = TRUE)
+```
+
+
+```{r}
+# training data
+# first identify the number of genes per transcript
+append_num_genes <- raw_ge_data_train_ %>%
+  rowwise() %>%
+  mutate(num_genes = (str_count(gene, ";") + 1), .after = "end") %>%
+  separate_rows(gene, sep = ";", convert = TRUE)
+
+# then divide all the sample counts by the number of genes for each transcript
+div_by_num_genes <- floor(append_num_genes[,8:ncol(append_num_genes)]/append_num_genes$num_genes)
+
+# create final modified dataset
+raw_ge_data_train_m <- bind_cols(append_num_genes[,1:7], div_by_num_genes)
+
+raw_ge_data_train_m
+  
+```
+
+```{r}
+# testing data
+# first identify the number of genes per transcript
+append_num_genes <- raw_ge_data_test_ %>%
+  rowwise() %>%
+  mutate(num_genes = (str_count(gene, ";") + 1), .after = "end") %>%
+  separate_rows(gene, sep = ";", convert = TRUE)
+
+# then divide all the sample counts by the number of genes for each transcript
+div_by_num_genes <- floor(append_num_genes[,8:ncol(append_num_genes)]/append_num_genes$num_genes)
+
+# create final modified dataset
+raw_ge_data_test_m <- bind_cols(append_num_genes[,1:7], div_by_num_genes)
+
+raw_ge_data_test_m
+```
+
+### Sum counts up to the gene level
+
+```{r}
+# training data
+raw_ge_data_train_gene <- raw_ge_data_train_m %>%
+  group_by(gene) %>%
+  summarise_at(vars(-entry, -strand, -chr, -start, -end, -num_genes), sum) # sum transcript level counts up to the gene level
+
+raw_ge_data_train_gene
+```
+
+```{r}
+# testing data
+raw_ge_data_test_gene <- raw_ge_data_test_m %>%
+  group_by(gene) %>%
+  summarise_at(vars(-entry, -strand, -chr, -start, -end, -num_genes), sum) # sum transcript level counts up to the gene level
+
+raw_ge_data_test_gene
+```
+
+### Identify mutual test-train trancripts
+
+For the project, it is necessary for the genes in the training and testing dataset to be the same, thus genes not in both datasets, must be removed.
+
+```{r}
+# remove non-mutual inclusive genes and all NA gene names by combining the training and testing datasets
+raw_ge_data_full <- inner_join(raw_ge_data_train_gene, raw_ge_data_test_gene, by = "gene") %>%
+  filter(!is.na(gene))
+
+raw_ge_data_full
+
+sum(is.na(raw_ge_data_full$gene)) 
+  # no missing values
+```
+
+### Prepare data for analysis
+
+- Put in long format for visualisation
+- Change sample names to more readable names 
+
+```{r}
+# wide to long, remove symbol
+raw_ge_full_long <- raw_ge_data_full %>%
+  pivot_longer(-c(gene),names_to = 'sample_id', values_to = 'counts') %>% # wide to long
+  filter(!is.na(gene))
+
+n_distinct(raw_ge_full_long$sample_id) # Sucessfull 412 samples
+
+raw_ge_full_long
+```
+
+## Analysis
+
+### Sample raw distribution
+
+```{r}
+# Depict single sample distribution: Raw
+ggplot(raw_ge_data_full,aes(x=c("090625PAXGENEDAY0_L4.LB25")))+
+  geom_count(fill = "#525252", binwidth = 1)
+```
+
+### Dataset distribution boxplot
+
+For this boxplot, we are only looking at the most proximal temporal sample grouping: "0-6", from the original training dataset
+```{r}
+original_sample_data
+```
+
+
+```{r}
+# Boxplot preperation
+bp_cases <- original_sample_data %>% 
+  filter(time_to_diagnosis_group == c("0-180", "181-360"), set == "training") 
+
+bp_cases
+nrow(bp_cases)
+  
+df <- original_sample_data %>%
+  filter(set == "training", label == "control") %>% # only selecting from the training set controls
+  mutate(time_to_diagnosis_group = fct_explicit_na(time_to_diagnosis_group)) %>%
+  mutate(n = row_number()) %>% # create row number if you dont have one
+  select(n, everything()) # put 'n' at the front of the dataset
+
+set.seed(42)
+
+# select control cases
+bp_controls <- df %>%
+  sample_n(nrow(bp_cases)) %>% # as many controls as cases
+  select(-n)
+
+# final boxplot sample information
+bp_sample_info <- rbind(bp_cases, bp_controls)
+
+bp_sample_info <- rename(bp_sample_info, sample_id = counts_sample_id)
+
+## Wide to long, select samples
+raw_ge_full_long_bp <- raw_ge_full_long %>%
+  filter(sample_id %in% bp_sample_info$sample_id) # select only boxplot set samples
+  
+raw_ge_full_long_bp 
+n_distinct(raw_ge_full_long_bp$sample_id) # Sucessfull 28 samples
+
+## Log transform counts
+trans_ge_full_long_bp <- raw_ge_full_long_bp %>%
+  mutate(counts = log2(counts+1)) 
+
+trans_ge_full_long_bp
+
+## Append sample labels to count table
+trans_ge_full_long_bp_set <- trans_ge_full_long_bp %>%
+  full_join(bp_sample_info, by =("sample_id")) %>%
+  mutate(sample_id = as.factor(sample_id))
+  
+
+trans_ge_full_long_bp_set
+
+```
+
+```{r}
+trans_ge_full_long_bp_set %>%
+  ggplot(aes(x=sample_id,y=counts, fill = label))+
+  geom_boxplot()+
+  facet_wrap(~label, scales = "free_x") + 
+  theme_bw() +
+  theme(axis.text.x = element_blank(), strip.background = element_rect(fill = "white")) + 
+  xlab("Sample ID") +
+  ylab("log(expression+1)")
+```
+
+
+# COUNT TABLE NORMALIZATION
+
+```{r}
+raw_ge_full_long
+# Back from long to wide
+raw_ge_data_full_x <- raw_ge_full_long %>%
+  tidyr::pivot_wider(names_from = sample_id, values_from = counts)
+raw_ge_data_full_x
+```
+
+## Sample-normalization
+### DESeq
+
+```{r}
+# DESeq
+deseq_sample_labels <- factor(original_sample_data$label, levels = c('control','case'))
+
+dds <- DESeqDataSetFromMatrix(select(raw_ge_data_full_x,-gene), DataFrame(deseq_sample_labels), ~deseq_sample_labels)
+dds <- estimateSizeFactors(dds) # estimate size factors for each gene
+
+deseq_norm_ge_data <- counts(dds, normalized=TRUE) # normalize counts for the dataset
+
+deseq_norm_ge_data <- deseq_norm_ge_data %>%
+  data.frame() %>%
+  mutate(gene_ref = raw_ge_data_full_x$gene) %>%
+  select(gene_ref, everything())
+  
+deseq_norm_ge_data
+  
+```
+
+### EdgeR
+
+```{r}
+# EdgeR
+dge <- DGEList(column_to_rownames(raw_ge_data_full_x, var = "gene"))
+
+dge <- calcNormFactors(dge, method = "TMM") # estimate size factors for each gene
+
+TMM_norm_ge_data <- cpm(dge) # normalize counts for the dataset (cpm = counts per million)
+
+TMM_norm_ge_data
+
+TMM_norm_ge_data <- TMM_norm_ge_data %>%
+  data.frame() %>%
+  mutate(gene_ref = raw_ge_data_full_x$gene) %>%
+  select(gene_ref, everything())
+
+TMM_norm_ge_data
+
+```
+
+### Comparison
+
+```{r}
+# Data Preperation
+##
+num_samples = 41
+## Deseq
+deseq_norm_ge_long_ <- deseq_norm_ge_data[,1:num_samples] %>%
+  pivot_longer(-c(gene_ref),names_to = 'sample_id', values_to = 'counts') %>%
+  mutate(method = "DESeq")
+
+deseq_norm_ge_long_
+
+## TMM
+TMM_norm_ge_data[,1:num_samples]
+TMM_norm_ge_long_ <- TMM_norm_ge_data[,1:num_samples] %>%
+  pivot_longer(-c(gene_ref),names_to = 'sample_id', values_to = 'counts') %>%
+  mutate(method = "TMM")
+
+TMM_norm_ge_long_
+
+## Raw
+raw_ge_long_full_ <- raw_ge_data_full_x[,1:num_samples] %>%
+  data.frame() %>%
+  pivot_longer(-c(gene),names_to = 'sample_id', values_to = 'counts') %>% # wide to long
+  rename(gene_ref = gene) %>%
+  mutate(method = "Raw counts")
+
+raw_ge_long_full_
+
+
+## Combine
+all_norm <- rbind(raw_ge_long_full_, TMM_norm_ge_long_, deseq_norm_ge_long_)
+all_norm$method <- factor(all_norm$method,
+                          levels = c("Raw counts", "DESeq", "TMM"))
+## Plot
+ggplot(data = all_norm, aes(x = sample_id, y = log2(counts+1), fill = method)) +
+  geom_boxplot() +
+  theme_bw() +
+  facet_grid(.~method) +
+  ylab(expression(log[2]~(normalized ~ count + 1))) + 
+  xlab("") +
+  theme(axis.text.x = element_blank())
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

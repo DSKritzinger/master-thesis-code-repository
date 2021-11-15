@@ -2,6 +2,7 @@
 The following code aims to provide the evaluation results of the Boruta-RFE
 feature selection method on the different test and validation datasets.
 '''
+# %%
 # imports
 ############################################################
 import pandas as pd
@@ -11,8 +12,6 @@ from sklearn.preprocessing import StandardScaler
 from imblearn.over_sampling import SMOTE
 from sklearn.metrics import recall_score, accuracy_score, precision_score, roc_curve, precision_recall_curve
 from sklearn.metrics import roc_curve, auc
-import time
-import pickle
 from matplotlib import pyplot as plt
 
 # local
@@ -20,7 +19,7 @@ from boruta_rfe_fs import BorutaRFE
 from boruta_rfecv_fs import BorutaRFECV
 
 # Standardization
-from median_ratio_method import  median_ratio_standardization
+from utils.median_ratio_method import median_ratio_standardization_
 
 # Machine Learning Classifiers
 from sklearn.neighbors import KNeighborsClassifier
@@ -35,8 +34,8 @@ def single_eval(classifiers, subset_list, X_train, y_train, X_test, y_test, prep
 
     # apply deseq
     print("Applying: " + preprocessing)
-    X_train = np.round(median_ratio_standardization(X_train), 0)
-    X_test = np.round(median_ratio_standardization(X_test), 0)
+    X_train = np.round(median_ratio_standardization_(X_train), 0)
+    X_test = np.round(median_ratio_standardization_(X_test), 0)
 
     # Extract only selected features from training/testing fold
     X_train_sel = X_train[:, subset_list]
@@ -129,29 +128,29 @@ def single_eval(classifiers, subset_list, X_train, y_train, X_test, y_test, prep
 # import data
 ############################################################
 # training
-filename = 'ge_raw_12'
+filename = 'data/ge_raw_12'
 _data_training = pd.read_csv(filename+'.csv', sep=',')
 
 # testing
-filename = 'gc6_test'
+filename = 'data/gc6_test'
 _data_testing = pd.read_csv(filename+'.csv', sep=',')
 
 # validation
 # original
 # training
-filename = 'ge_raw_acs_train'
+filename = 'data/ge_raw_acs_train'
 _data_acs_training = pd.read_csv(filename+'.csv', sep=',')
 # testing
-filename = 'ge_raw_acs_test'
+filename = 'data/ge_raw_acs_test'
 _data_acs_testing = pd.read_csv(filename+'.csv', sep=',')
 
 # adapted
 # training
-filename = 'ge_raw_acs_adapt_train'
+filename = 'data/ge_raw_acs_adapt_train'
 _data_acs_adapt_training = pd.read_csv(filename+'.csv', sep=',')
 _data_acs_adapt_training
 # testing
-filename = 'ge_raw_acs_adapt_test'
+filename = 'data/ge_raw_acs_adapt_test'
 _data_acs_adapt_testing = pd.read_csv(filename+'.csv', sep=',')
 
 # %%

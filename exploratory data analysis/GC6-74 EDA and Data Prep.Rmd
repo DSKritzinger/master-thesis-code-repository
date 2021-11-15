@@ -1,0 +1,1102 @@
+---
+title: "GC6-74 EDA and Data Prep"
+output: html_notebook
+---
+
+```{r}
+# Packages
+library(DESeq2)
+library(edgeR)
+library(backports)
+library(plyr)
+library(tidyverse)
+
+
+```
+
+```{r}
+# Functions
+# Matching matrix filling function
+# Creates matrix where each column represents a case and each row value represents the control indices which can be matched (according to the criteria of site, age, gender) to the specified case.
+
+matching_matrix_filling <- function(cases,controls){
+  # Initialize variables
+  matched_controls_matrix = matrix(nrow = 50, ncol = nrow(cases)) # create empty matrix for each case's matching control indices
+  l <- 1
+
+  # matrix filling loop
+  for (i in 1:nrow(cases)) {
+    k <- 1
+    for (j in 1:nrow(controls)) {
+      if ( all(cases[i, c('site','age_group','gender')] == controls[j, c('site','age_group','gender')]) == TRUE) {  # determines which controls have  
+        matched_controls_matrix[k,l] <- j                                                                           # matching variables to each cases  
+        k = k+1                                                                                                     # variables and saves those indices
+      }
+    }
+    l = l+1
+  }
+  return(matched_controls_matrix)
+}
+
+# & control set extractor function
+
+control_set_extractor <- function(seed,mcm,sample_size,controls_data) { # mcm - matched controls matrix
+  set.seed(seed)
+  ## Initialize variables
+  k = 1
+  col_len_list <- list() # empty list for ordering length of mcm columns
+  i <-  2 # set to 2 as initial list is evaluated outside of while
+  check <- 1 
+  
+  while (k <= ncol(mcm)){
+    col_len <- length(na.omit(mcm[,k]))
+    col_len_list <- append(col_len_list,col_len)
+    k = k+1
+  }
+  
+  mcm_ordered <- mcm[,order(unlist(col_len_list),decreasing = FALSE)]
+  
+  list <- list()                    
+  if (sample_size > length(na.omit(mcm_ordered[,1]))) {              # initial list of x number of random samples which are matched to the first case
+    list <- append(list,sample(na.omit(mcm_ordered[,1]),size=length(na.omit(mcm_ordered[,1])),replace=F)) 
+  } else {
+    list <- append(list,sample(na.omit(mcm_ordered[,1]),size=sample_size,replace=F))
+  }
+  # control generation loop
+  while (i <= ncol(mcm_ordered)) {
+    if (sample_size > length(na.omit(mcm_ordered[,i]))) {              # sample of x number of random controls evaluated for each case as while ticks on
+      val <- sample(na.omit(mcm_ordered[,i]),size=length(na.omit(mcm_ordered[,i])),replace=F) 
+    } else {
+      val <- sample(na.omit(mcm_ordered[,i]),size=sample_size,replace=F)
+    }
+
+    if (any(list %in% val ) == FALSE) { # all control samples must be distinct, thus this checks if the samples choosen are distinct from 
+                                        # the values already in the list, if so it appends the samples to the list
+      list <- append(list,val)
+    } else {  # if the samples are non-distinct from list, the same case's matching controls are once again sampled until distinct samples can be found to add to the list
+      if (check < 1000) { # This methods tries 1000 different samplings before accepting that their aren't any distinct samples
+        i = i - 1
+      } else {            # in some cases there are no distinct samples to be found from the case's matching controls, thus after a set amount of 
+          cat("\nCheck has been reached:",check)  # iterations without finding a working combination, the loop just skips to the following case
+          distinct_idx <- !(na.omit(mcm_ordered[,i]) %in% list)
+          distinct_vals <- na.omit(mcm_ordered[distinct_idx,i])
+          if (length(distinct_vals) < sample_size) {
+            sel_distinct_vals <-   distinct_vals
+          } else {
+            sel_distinct_vals <- distinct_vals[1:sample_size]
+            
+          }
+          
+          list <- append(list,sel_distinct_vals)
+          cat("\nFor row ", i, " of the ordered mcm list", length(distinct_vals),"controls were matched to cases" )
+          check <- 1
+      }
+      check <- check + 1
+    }
+    
+    i = i + 1
+
+  }
+  matched_control_ind <- ldply (list, data.frame)
+  matched_controls <- controls_data[matched_control_ind[,1],]
+  return(matched_controls)
+}
+```
+
+##################################################################################################################################################
+# IMPORT SAMPLE INFO DATA
+##################################################################################################################################################
+```{r}
+# Import data
+raw_sample_data <- read_csv2(file         = "C:/Users/Daniel/Google Drive/Postgraduate/Thesis/Data/GC6 DATA/GEO data/GSE94438_series_matrix_Excel_test.csv"
+                      , col_types   = cols( 
+                                         sample_title = col_character(),
+                                         sample_geo_accession = col_character(),
+                                         sample_id = col_double(),
+                                         subject_id = col_character(),
+                                         site = col_factor(),
+                                         age = col_double(),
+                                         gender = col_factor(),
+                                         label = col_factor(),
+                                         from_exposure = col_double(),
+                                         to_diagnosis = col_double()
+                                      )
+             )
+# Append attribute "before diagnosis" which is the time before a progressor is diagnosed in months
+raw_sample_data$before_diagnosis <- raw_sample_data$to_diagnosis - raw_sample_data$from_exposure
+raw_sample_data
+```
+##################################################################################################################################################
+# FEATURE ENGINEERING
+##################################################################################################################################################
+From ACS and GC6 papers, for control matching it was determined that the age variable has to be categorized for data matching
+
+These categories will be as follow:
+  - <18,
+  - 18-25,
+  - 26-35,
+  - >35
+
+```{r}
+# Append new grouped age attribute
+raw_sample_data <- raw_sample_data %>% 
+  mutate(age_group = case_when(age < 18 ~ '<18', 
+                               age >= 18  & age < 26 ~ '18-25', 
+                               age >= 26  & age < 36 ~ '26-35', 
+                               age > 35 ~ '>35'))
+
+raw_sample_data$age_group <- as.factor(raw_sample_data$age_group) #change col type to factor
+
+# Make the "from_exposure" attribute a factor now after it has already been used to create the "before_diagnosis" attribute
+raw_sample_data$from_exposure <- as.factor(raw_sample_data$from_exposure)
+```
+##################################################################################################################################################
+# SAMPLE INFO EDA 
+##################################################################################################################################################
+## High level inspection
+
+```{r}
+head(raw_sample_data)
+summary(raw_sample_data)#view(raw_sample_data)
+```
+
+## Column level inspection
+
+```{r}
+# Sample title
+n_distinct(raw_sample_data['sample_title'])
+```
+
+All different values
+
+```{r}
+# Sample geo accession number
+n_distinct(raw_sample_data['sample_geo_accession']) 
+```
+
+All different values
+
+```{r}
+n_distinct(raw_sample_data['sample_id']) # 418 vs 434 samples, why?
+sum(is.na(raw_sample_data$sample_id)) # No missing values
+```
+
+No missing samples, but the number of distinct samples and the total number of samples differ, thus there must exist duplicate
+
+```{r}
+# Just to see which sample are duplicated
+duplicate_sample_id <- duplicated(raw_sample_data$sample_id) # Identifying duplicate samples
+raw_sample_data[duplicate_sample_id,] # Inspect duplicate samples
+# Remove duplicate samples
+raw_sample_data <- raw_sample_data[!duplicate_sample_id,] # 418 samples total now
+
+raw_sample_data
+
+```
+
+```{r}
+# Subject ID
+n_distinct(raw_sample_data['subject_id']) #335 samples
+sum(is.na(raw_sample_data$subject_id)) # 6 missing values, no way of identifying subjects without a subject id, thus values will be removed
+raw_sample_data <- raw_sample_data[!is.na(raw_sample_data$subject_id),] # removed NA subjects, thus 412 samples now
+
+# The rest of the sample id duplicates are samples that were taken at different timepoints
+unique(raw_sample_data$subject_id) # number of unique subject ids (334)
+
+raw_sample_data
+
+```
+
+As the number of samples are obviously not much more than the number of subjects, it would be interesting to see:
+- how many subjects have more than one sample
+- how many samples are there in each time "before_diagnosis" category
+
+```{r}
+# Number of subject that have more than one sample 
+raw_sample_data %>%
+  group_by(subject_id) %>%
+  tally() %>%
+  .$n %>%
+  as.factor() %>%
+  summary()
+  
+  
+```
+
+```{r}
+# Number of samples per "before diagnosis" group
+# Create groupings
+raw_sample_data <- raw_sample_data %>%
+  mutate(before_diagnosis_group = case_when(before_diagnosis >=0 & before_diagnosis <=6 ~ '0-6', 
+                               before_diagnosis >6 & before_diagnosis <=12 ~ '6-12', 
+                               before_diagnosis >12 & before_diagnosis <=18 ~ '12-18', 
+                               before_diagnosis >18 & before_diagnosis <=24 ~ '18-24')) 
+
+raw_sample_data$before_diagnosis_group <- as.factor(raw_sample_data$before_diagnosis_group) 
+# See group distribution
+summary(raw_sample_data)
+```
+
+```{r}
+# Number of samples per site cohort
+raw_sample_data %>%
+  filter(site == "SUN") %>%
+  summary()
+  
+```
+
+##################################################################################################################################################
+# CLEAN SAMPLE INFO
+##################################################################################################################################################
+```{r}
+sample_data <- raw_sample_data %>%
+  select(-c(sample_title, sample_geo_accession, from_exposure, to_diagnosis, age))
+
+sample_data
+```
+##################################################################################################################################################
+# TRAIN TEST SPLIT
+##################################################################################################################################################
+```{r}
+# Create stratified sampled test set by taking into account sample collection site, time to TB diagnosis grouping and label distribution
+
+df <- sample_data  %>%
+  mutate(before_diagnosis_group = fct_explicit_na(before_diagnosis_group)) %>%
+  mutate(n = row_number()) %>% # create row number if you dont have one
+  select(n, everything()) # put 'n' at the front of the dataset
+
+df
+
+set.seed(42)
+
+sample_train <- df %>%
+  group_by(label, before_diagnosis_group, site) %>% # any number of variables you wish to partition by proportionally
+  sample_frac(.75) # '.75' is the proportion of the original df you wish to sample
+
+sample_test <- anti_join(df, sample_train) # creates test dataframe with those observations not in 'train.'
+```
+
+## Assess training and testing sets
+
+```{r}
+# training set
+sample_train
+summary(sample_train)
+```
+
+The training samples contain no duplicates, from the summary it seems that all the stratified by attributes are distributionally equivalent to the orignal dataset distributions, and the dataset attributes are split correctly according to the 75-25 provided split.
+
+```{r}
+# test set
+sample_test
+summary(sample_test)
+```
+
+The test sample also contain no duplicates, from the summary the splitting and distribution criteria are correct. It is however necessary to note the lack of test cases. This is however an effect of small sample sizes.
+
+These datasets will be used to split the gene-expression count tables and those will be saved.
+##################################################################################################################################################
+# TRAINING DATA SPLITTING
+##################################################################################################################################################
+## Seperate the training set controls from the rest of the data
+```{r}
+train_controls <- sample_train %>%
+  filter(label == "control")
+
+train_controls # training set controls
+summary(train_controls)
+```
+
+## Match controls to cases
+### Set number of controls to cases matching
+```{r}
+num_matched_controls = 3
+```
+
+
+## 0-6 months
+```{r}
+train_cases_6 <- sample_train %>%
+  filter(before_diagnosis_group == "0-6") 
+
+# create matching_control_matrix (mcm)
+mcm_6 <- matching_matrix_filling(train_cases_6, train_controls)
+
+# extract control set from mcm
+matched_control_6 <- control_set_extractor(123,mcm_6,num_matched_controls,train_controls)
+
+# case-control set for samples which are to be diagnosed in less than 6 months
+cc_6 <- rbind(matched_control_6,train_cases_6)
+
+summary(cc_6)
+```
+
+Comparing a summary of "cc_6" and the "train_cases_6" it is evident that the matching process was performed correctly. 
+
+## 0-12 months
+```{r}
+train_cases_12 <- sample_train %>%
+  filter(before_diagnosis >= 0 & before_diagnosis <= 12) 
+
+# create matching_control_matrix (mcm)
+mcm_12 <- matching_matrix_filling(train_cases_12, train_controls)
+
+# extract control set from mcm
+matched_control_12 <- control_set_extractor(123,mcm_12,num_matched_controls,train_controls)
+# if number of matched controls are to few, append extra randomly selected controls
+if (nrow(matched_control_12) < nrow(train_cases_12)*num_matched_controls) {
+  train_controls_without <- filter(train_controls, !(sample_id %in% matched_control_12$sample_id) )
+  extra_samples_indices <- sample(train_controls_without$sample_id, ((nrow(train_cases_12)*num_matched_controls) - nrow(matched_control_12)))
+  extra_train_controls <- filter(train_controls, (sample_id %in% extra_samples_indices))
+  matched_control_12 <- rbind(matched_control_12,extra_train_controls)
+}
+
+# case-control set for samples which are to be diagnosed in less than 6 months
+cc_12 <- rbind(matched_control_12,train_cases_12)
+
+summary(cc_12)
+```
+
+Comparing a summary of "cc_12" and the "train_cases_12" it is evident that the matching process was performed correctly. There was however to few distinct controls to match perfectly, thus the dataset contains 10 to few controls. This is however the only option due to a lack of distinct controls.
+
+## 0-18 months
+```{r}
+train_cases_18 <- sample_train %>%
+  filter(before_diagnosis >= 0 & before_diagnosis <= 18) 
+train_cases_18
+# create matching_control_matrix (mcm)
+mcm_18 <- matching_matrix_filling(train_cases_18, train_controls)
+
+# extract control set from mcm
+matched_control_18 <- control_set_extractor(123,mcm_18,num_matched_controls,train_controls)
+
+# if number of matched controls are to few, append extra randomly selected controls
+if (nrow(matched_control_18) < nrow(train_cases_18)*num_matched_controls) {
+  train_controls_without <- filter(train_controls, !(sample_id %in% matched_control_18$sample_id) )
+  extra_samples_indices <- sample(train_controls_without$sample_id, ((nrow(train_cases_18)*num_matched_controls) - nrow(matched_control_18)))
+  extra_train_controls <- filter(train_controls, (sample_id %in% extra_samples_indices))
+  matched_control_18 <- rbind(matched_control_18,extra_train_controls)
+}
+
+# case-control set for samples which are to be diagnosed in less than 6 months
+cc_18 <- rbind(matched_control_18,train_cases_18)
+
+summary(cc_18)
+```
+
+Comparing a summary of "cc_18" and the "train_cases_24" it is evident that the matching process was performed correctly. There was however to few distinct controls to match perfectly, thus the dataset contains 23 to few controls. This is however the only option due to a lack of distinct controls.
+
+## 0-24 months
+```{r}
+train_cases_24 <- sample_train %>%
+  filter(before_diagnosis >= 0 & before_diagnosis <= 24) 
+train_cases_24
+# create matching_control_matrix (mcm)
+mcm_24 <- matching_matrix_filling(train_cases_24, train_controls)
+
+# extract control set from mcm
+matched_control_24 <- control_set_extractor(123,mcm_24,num_matched_controls,train_controls)
+
+# if number of matched controls are to few, append extra randomly selected controls
+if (nrow(matched_control_24) < nrow(train_cases_24)*num_matched_controls) {
+  train_controls_without <- filter(train_controls, !(sample_id %in% matched_control_24$sample_id) )
+  extra_samples_indices <- sample(train_controls_without$sample_id, ((nrow(train_cases_24)*num_matched_controls) - nrow(matched_control_24)))
+  extra_train_controls <- filter(train_controls, (sample_id %in% extra_samples_indices))
+  matched_control_24 <- rbind(matched_control_24,extra_train_controls)
+}
+
+# case-control set for samples which are to be diagnosed in less than 6 months
+cc_24 <- rbind(matched_control_24,train_cases_24)
+
+summary(cc_24)
+```
+
+Comparing a summary of "cc_24" and the "train_cases_24" it is evident that the matching process was performed correctly. There was however to few distinct controls to match perfectly, thus the dataset contains 31 to few controls. This is however the only option due to a lack of distinct controls.
+
+##################################################################################################################################################
+# IMPORT COUNT DATA
+##################################################################################################################################################
+
+```{r}
+raw_ge_data <- read_csv("C:/Users/Daniel/Google Drive/Postgraduate/Thesis/Data/GC6 DATA/GEO data/GSE94438_rawCounts_GeneNames_AllSamples.csv")
+```
+
+##################################################################################################################################################
+# COUNT TABLE EDA
+##################################################################################################################################################
+
+## High level inspection
+
+```{r}
+# Explore high-level data
+dim(raw_ge_data) # 15676 x 420
+raw_ge_data
+```
+
+It is evident that the raw count table has to many samples, thus these have to be removed
+
+```{r}
+# Explore for missing values
+sum(is.na(raw_ge_data['symbol'])) # contain missing variables  which have to be removed (240)
+sum(is.na(raw_ge_data['X1'])) # no missing values, but ensemble is very liberally assigned genes
+```
+
+Although gene names contain missing values, these will be used, and missing values be removed.
+
+```{r}
+# Explore for duplicate subject names
+raw_ge_data %>% 
+  filter(duplicated(symbol))
+```
+
+Duplicate samples are evident and have to be summed together.
+
+```{r}
+# sum duplicate samples
+raw_ge_data <- raw_ge_data %>%
+  group_by(symbol) %>%
+  summarise_at(vars(-X1), sum) # sum duplicate gene symbol counts together
+
+
+raw_ge_data
+```
+
+```{r}
+# check if duplicate samples have been removed
+raw_ge_data %>% 
+  filter(duplicated(symbol))
+  # yes they have
+```
+
+## Prepare for analysis
+
+- Put in long format for visualisation
+- Clean (remove X1, remove bad samples), 
+
+```{r}
+# wide to long, remove symbol
+raw_ge_long <- raw_ge_data %>%
+  pivot_longer(-c(symbol),names_to = 'sample_id', values_to = 'counts') %>% # wide to long
+  filter(!is.na(symbol)) # remove na symbol rows
+
+# remove bad samples
+str_sub(raw_ge_long$sample_id,1,1) <- '' # remove 'X''s
+
+raw_ge_long <- raw_ge_long %>%
+  filter(sample_id %in% raw_sample_data$sample_id) # Remove bad samples
+
+n_distinct(raw_ge_long$sample_id) # Sucessfull 412 samples
+
+raw_ge_long
+```
+
+## Analysis
+
+### Sample raw distribution
+
+```{r}
+# Depict single sample distribution: Raw
+ggplot(raw_ge_data,aes(x=X314, y=..density..))+
+  geom_histogram(fill = "#00AFBB") +
+  theme_bw() +
+  theme(panel.border = element_blank(), axis.line = element_line(colour = "black")) +
+  xlab("Counts") +
+  ylab("Density")
+
+#ggsave("SampleCountDistRaw.png", device = "png", path = "C:/Users/Daniel/Google Drive/Postgraduate/Thesis/Thesis Figures", width = 7, height = 7, units = "cm")
+
+```
+
+### Sample log2 transformed distribution
+
+```{r}
+# Depict single sample distribution: Raw log2 transformed
+ggplot(raw_ge_data,aes(x=log2(X314+1), y=..density..))+
+  geom_histogram(fill = "#00AFBB") +
+  theme_bw() +
+  theme(panel.border = element_blank(), axis.line = element_line(colour = "black")) +
+  xlab(expression(Log[2]~(count + 1))) +
+  ylab("Density")
+
+#ggsave("SampleCountDistNorm.png", device = "png", path = "C:/Users/Daniel/Google Drive/Postgraduate/Thesis/Thesis Figures", width = 7, height = 7, units = "cm")
+```
+
+### Dataset distribution boxplot
+
+For this boxplot, we are only looking at the most proximal temporal sample grouping: "0-6", but with a 1:1 case-control ratio
+```{r}
+# Boxplot preperation
+## re-extract control set from mcm but in a 1:1 ratio
+matched_control_61 <- control_set_extractor(123,mcm_6,1,train_controls)
+
+## re-case-control set for samples which are to be diagnosed in less than 6 months
+cc_61 <- rbind(matched_control_61,train_cases_6)
+cc_61
+
+## Wide to long, remove symbol
+raw_ge_long_61 <- raw_ge_long %>%
+  filter(sample_id %in% cc_61$sample_id) %>%  # remove duplicate/bads samples & select only set samples
+  mutate(sample_id = as.numeric(sample_id))  # for joining process
+  
+raw_ge_long_61 
+n_distinct(raw_ge_long_61$sample_id) # Sucessfull 144 samples
+
+## Log transform counts
+trans_ge_long_61 <- raw_ge_long_61 %>%
+  mutate(counts = log2(counts+1)) 
+
+trans_ge_long_61
+
+## Append sample labels to count table
+trans_ge_long_61_set <- trans_ge_long_61 %>%
+  full_join(cc_61, by =("sample_id")) %>%
+  mutate(sample_id = as.factor(sample_id)) %>%
+  select(-c(n))
+  
+
+trans_ge_long_61_set
+
+```
+
+```{r}
+trans_ge_long_61_set %>%
+  ggplot(aes(x=sample_id,y=counts, fill = label))+
+  geom_boxplot()+
+  facet_wrap(~label, scales = "free_x") + 
+  theme_bw() +
+  theme(axis.text.x = element_blank(), strip.background = element_rect(fill = "white")) + 
+  xlab("Sample ID") +
+  ylab(expression(log[2]~(standardized ~ count + 1)))
+```
+
+This is a neat plot, and can be used as is (except for the "label" has to become Labels)
+
+### Difference between temporal timepoints of subjects
+
+```{r}
+dup3 <- sample_data %>%
+  group_by(subject_id) %>%
+  filter(n() > 2, label == 'case') 
+
+dup3
+
+raw_ge_long_dup3 <- raw_ge_long %>%
+  filter(sample_id %in% dup3$sample_id) %>%  # remove duplicate/bads samples & select only set samples
+  mutate(sample_id = as.numeric(sample_id))
+  
+raw_ge_long_dup3
+n_distinct(raw_ge_long_dup3$sample_id) 
+
+## Log transform counts
+trans_ge_long_dup3 <- raw_ge_long_dup3 %>%
+  mutate(counts = log2(counts+1)) 
+
+trans_ge_long_dup3
+
+## Append sample labels to count table
+trans_ge_long_dup3_data <- trans_ge_long_dup3 %>%
+  full_join(dup3, by =("sample_id")) %>%
+  mutate(sample_id = as.factor(sample_id))
+
+## repeated sample average expression across samples 
+trans_ge_long_dup3_data %>%
+  ggplot(aes(x=sample_id,y=counts, colour = subject_id))+
+  geom_boxplot()
+```
+##################################################################################################################################################
+# COUNT TABLE STANDARDIZATION
+##################################################################################################################################################
+```{r}
+raw_ge_long
+# Back from long to wide
+raw_ge_data_x <- raw_ge_long %>%
+  tidyr::pivot_wider(names_from = sample_id, values_from = counts)
+raw_ge_data_x # raw_ge_data sonder die x's en sonder die verkeerde samples
+```
+
+## Sample-normalization
+### DESeq
+
+```{r}
+# DESeq
+deseq_sample_labels <- factor(sample_data$label, levels = c('control','case'))
+
+dds <- DESeqDataSetFromMatrix(select(raw_ge_data_x,-symbol), DataFrame(deseq_sample_labels), ~deseq_sample_labels)
+dds <- estimateSizeFactors(dds) # estimate size factors for each gene
+
+dds$sizeFactor
+
+deseq_ge_data <- counts(dds, normalized=TRUE) # normalize counts for the dataset
+
+deseq_ge_data <- deseq_ge_data %>%
+  data.frame() %>%
+  mutate(gene_ref = raw_ge_data_x$symbol) %>%
+  select(gene_ref, everything())
+  
+deseq_ge_data
+  
+```
+
+```{r}
+# DESeq
+deseq_sample_labels <- factor(sample_data$label, levels = c('control','case'))
+
+dds <- DESeqDataSetFromMatrix(select(raw_ge_data_x,-symbol), DataFrame(deseq_sample_labels), ~deseq_sample_labels)
+dds <- estimateSizeFactors(dds) # estimate size factors for each gene
+
+dds$sizeFactor
+
+deseq_ge_data <- counts(dds, normalized=TRUE) # normalize counts for the dataset
+
+deseq_ge_data <- deseq_ge_data %>%
+  data.frame() %>%
+  mutate(gene_ref = raw_ge_data_x$symbol) %>%
+  select(gene_ref, everything())
+  
+deseq_ge_data
+```
+
+
+### Median of ratio method
+
+The DESeq2 median of ratios method was self implemented in order to confirm its use suitability for implementation in python
+
+```{r}
+# define geometric mean function
+geo_mean <- function(x,na.rm=TRUE)
+{ 
+exp(mean(log(x),na.rm=na.rm)) }
+# determine pseudo-reference samples counts as the geometric mean of all gene counts
+pseudo_ref_samples <- raw_ge_data_x %>% 
+  select(-symbol) %>%
+  rowwise() %>%
+  mutate(pseudo_ref = geo_mean(c_across())) %>%
+  select(pseudo_ref, everything()) %>%
+  filter(pseudo_ref > 0)
+
+pseudo_ref_samples
+
+# calculate ratio of each sample to the reference
+sample_ratios <- pseudo_ref_samples %>%
+  mutate(across(-pseudo_ref, ~./pseudo_ref)) 
+
+sample_ratios
+
+# Calculate each samples normalization/standardization factor
+norm_factors <- sample_ratios %>%
+  ungroup() %>%
+  summarise_at(vars(-pseudo_ref), median)
+
+length(norm_factors)
+
+# Standardize counts
+mrm_ge_data_t <- raw_ge_data_x %>%
+  pivot_longer(-symbol) %>%
+  pivot_wider(names_from = symbol, values_from = value) %>%
+  mutate(across(-name, ~./t(norm_factors))) %>%
+  rename(sample_id = name)
+
+```
+### EdgeR
+
+```{r}
+# EdgeR
+dge <- DGEList(column_to_rownames(raw_ge_data_x, var = "symbol"))
+
+dge <- calcNormFactors(dge, method = "TMM") # estimate size factors for each gene
+
+tmm_ge_data <- cpm(dge) # normalize counts for the dataset (cpm = counts per million)
+
+#tmm_ge_data_log <- cpm(dge, log = TRUE) # normalize counts for the dataset (cpm = counts per million) and log normalized
+#tmm_ge_data_log 
+
+tmm_ge_data <- tmm_ge_data %>%
+  data.frame() %>%
+  mutate(gene_ref = raw_ge_data_x$symbol) %>%
+  select(gene_ref, everything())
+
+tmm_ge_data
+
+#1000*select(tmm_ge_data, -gene_ref)
+
+```
+
+Tried to depict the effect of standardization on library size, but it is not only not usefull information, but also could not do it.
+
+tmm_ge_data %>%
+  pivot_longer(-gene_ref) %>%
+  pivot_wider(names_from=gene_ref, values_from=value) %>%
+  rowwise() %>%
+  mutate(sample_count_sum = sum(c_across(where(is.numeric)))) %>%
+  select(sample_count_sum,everything()) %>%
+  ggplot(aes(x=name, y=sample_count_sum)) +
+  geom_histogram(stat = "identity") +
+  theme(axis.text.x = element_blank())
+
+raw_ge_data %>%
+  pivot_longer(-symbol) %>%
+  pivot_wider(names_from=symbol, values_from=value) %>%
+  rowwise() %>%
+  mutate(sample_count_sum = sum(c_across(where(is.numeric)))) %>%
+  select(sample_count_sum,everything()) %>%
+  ggplot(aes(x=name, y=sample_count_sum)) +
+  geom_histogram(stat = "identity") +
+  theme(axis.text.x = element_blank())
+
+select(-c(1)) %>%
+  pivot_longer(names_to = 'sample_id', values_to = 'counts') %>% # wide to long
+  group_by(sample_id) %>%
+  mutate(sample_count_sum = sum(counts)) 
+%>%
+  ggplot(aes(x=sample_id, y=sample_count_sum)) +
+  geom_histogram(stat = "identity") +
+  theme(axis.text.x = element_blank())
+  
+deseq_ge_data[,1:30] %>%
+  pivot_longer(-c(1),names_to = 'sample_id', values_to = 'counts') %>% # wide to long
+  group_by(sample_id) %>%
+  mutate(sample_count_sum = sum(counts)) %>%
+  ggplot(aes(x=sample_id, y=sample_count_sum)) +
+  geom_histogram(stat = "identity") +
+  theme(axis.text.x = element_blank())
+
+raw_ge_data[,1:30] %>%
+  pivot_longer(-c(1),names_to = 'sample_id', values_to = 'counts') %>% # wide to long
+  group_by(sample_id) %>%
+  mutate(sample_count_sum = sum(counts)) %>%
+  ggplot(aes(x=sample_id, y=sample_count_sum)) +
+  geom_histogram(stat = "identity") +
+  theme(axis.text.x = element_blank())
+
+deseq_ge_data %>%
+  pivot_longer(-gene_ref) %>%
+  pivot_wider(names_from=gene_ref, values_from=value) %>%
+
+raw_ge_data_x %>%
+  summarise_at(vars(-symbol), sum) %>%
+  rowwise() %>%
+  sd()
+
+deseq_ge_data %>%
+  summarise_at(vars(-gene_ref), sum) %>%
+  rowwise() %>%
+  sd()
+
+
+
+### Comparison
+#### Base
+
+```{r}
+# Data Preperation
+##
+b_num_sample = 50
+num_samples = 80
+## Deseq
+deseq_ge_long_ <- deseq_ge_data[,c(1,b_num_sample:num_samples)] %>%
+  pivot_longer(-c(gene_ref),names_to = 'sample_id', values_to = 'counts') %>%
+  mutate(Method = "DESeq")
+
+deseq_ge_long_$counts <- round(deseq_ge_long_$counts) # discretization
+
+## TMM
+tmm_ge_long_ <- tmm_ge_data[,c(1,b_num_sample:num_samples)] %>%
+  pivot_longer(-c(gene_ref),names_to = 'sample_id', values_to = 'counts') %>%
+  mutate(Method = "TMM")
+
+
+## Raw
+raw_ge_long_ <- raw_ge_data[,c(1,b_num_sample:num_samples)] %>%
+  pivot_longer(-c(symbol),names_to = 'sample_id', values_to = 'counts') %>% # wide to long
+  rename(gene_ref = symbol) %>%
+  mutate(Method = "Raw")
+
+raw_ge_long_
+
+## Combine
+all_norm <- rbind(raw_ge_long_, tmm_ge_long_, deseq_ge_long_)
+all_norm$Method <- factor(all_norm$Method,
+                          levels = c("Raw", "DESeq", "TMM"))
+
+## Plot
+ggplot(data = all_norm, aes(x = sample_id, y = log2(counts+1), fill = Method)) +
+  geom_boxplot() +
+  theme_bw() +
+  facet_grid(.~Method) +
+  theme(axis.text.x = element_blank(), strip.background = element_rect(fill = "white"), legend.position = "none") +
+  ylab(expression(log[2]~(standardized ~ count + 1))) + 
+  xlab("Samples")
+
+```
+
+```{r}
+# Save plot for use
+#ggsave("GC6_74Standardization_.png", device = "png", path = "C:/Users/Daniel/Google Drive/Postgraduate/Thesis/Thesis Figures", width = 14, height = 8, units = "cm")
+```
+
+It is important to note here that the TMM output is scaled as counts per million, thus it is difficult to compare the plots.
+
+#### TMM Scaling
+
+Thus, it was decided to try and identify a suitable scaling factor for the TMM values.
+
+```{r}
+# Determine mean of each samples mean counts
+## TMM
+tmm_mean <- tmm_ge_data %>%
+  summarise_at(vars(-gene_ref), mean) %>%
+  mutate(sum = sum(c_across())) %>%
+  select(sum, everything()) %>%
+  select(sum)
+## Raw
+raw_mean <- raw_ge_data_x %>%
+  summarise_at(vars(-symbol), mean) %>%
+  mutate(sum = sum(c_across())) %>%
+  select(sum, everything())%>%
+  select(sum)
+## DESeq
+deseq_mean <- deseq_ge_data %>%
+  summarise_at(vars(-gene_ref), mean) %>%
+  mutate(sum = sum(c_across())) %>%
+  select(sum, everything())%>%
+  select(sum)
+## RAW/TMM
+raw_mean/tmm_mean
+
+## DESq/TMM
+deseq_mean/tmm_mean
+
+```
+
+From the above, it is evident that the DESeq has a similar mean of means as the Raw data, while the TMM output is considerably lower, to be exact, 39.2375
+
+```{r}
+## Scale value
+scale <- 39.2375
+## Scale TMM ouput
+tmm_ge_long_$counts <- tmm_ge_long_$counts*scale 
+
+## Combine
+all_norm <- rbind(raw_ge_long_, tmm_ge_long_, deseq_ge_long_)
+all_norm$Method <- factor(all_norm$Method,
+                          levels = c("Raw", "DESeq", "TMM"))
+
+## Plot
+ggplot(data = all_norm, aes(x = sample_id, y = log2(counts+1), fill = Method)) +
+  geom_boxplot() +
+  theme_bw() +
+  facet_grid(.~Method) +
+  theme(axis.text.x = element_blank(), strip.background = element_rect(fill = "white"), legend.position = "none") +
+  ylab(expression(log[2]~(standardized ~ count + 1))) + 
+  xlab("Samples")
+```
+
+```{r}
+# Save plot for use
+#ggsave("GC6_74StandardizationScaled.png", device = "png", path = "C:/Users/Daniel/Google Drive/Postgraduate/Thesis/Thesis Figures", width = 14, height = 8, units = "cm")
+```
+
+It can now be seen that the standardization technique seem to result in very similar outputs. 
+
+#### Outlier analysis
+
+To confirm their similarity we can analyse the outliers of each method
+
+```{r}
+# First plot both boxplots
+# TMM
+boxplot(log2(select(tmm_ge_data[,c(1,b_num_sample:num_samples)],-gene_ref)*scale +1))$median
+# DESeq
+boxplot(log2(select(deseq_ge_data[,c(1,b_num_sample:num_samples)],-gene_ref) +1))$median
+```
+
+```{r}
+# Select sample to evaluate
+sample <- "X571"
+# determine outliers of tmm
+outvals_tmm <- boxplot(log2(tmm_ge_data[c(sample)]*scale +1), plot = FALSE)$out
+outvals_tmm
+# determine outliers of deseq
+outvals_deseq <- boxplot(log2(deseq_ge_data[c(sample)] +1), plot = FALSE)$out
+outvals_deseq
+
+```
+
+```{r}
+# index of tmm outliers
+which(log2(tmm_ge_data[c(sample)]*scale +1) >= min(outvals_tmm))
+# index of deseq outliers
+which(log2(deseq_ge_data[c(sample)] +1) >= min(outvals_deseq))
+```
+
+
+```{r}
+# Scaled tmm sample distribution
+ggplot(tmm_ge_data,aes(x=log2(X571*scale+1), y=..density..))+
+  geom_histogram(fill = "#00AFBB") +
+  theme_bw() +
+  theme(panel.border = element_blank(), axis.line = element_line(colour = "black")) +
+  xlab(expression(Log[2]~(count + 1))) +
+  ylab("Density")
+
+# deseq sample distribution
+ggplot(deseq_ge_data,aes(x=log2(X571+1), y=..density..))+
+  geom_histogram(fill = "#00AFBB") +
+  theme_bw() +
+  theme(panel.border = element_blank(), axis.line = element_line(colour = "black")) +
+  xlab(expression(Log[2]~(count + 1))) +
+  ylab("Density")
+
+# raw sample distribution
+ggplot(raw_ge_data,aes(x=log2(X571+1), y=..density..))+
+  geom_histogram(fill = "#00AFBB") +
+  theme_bw() +
+  theme(panel.border = element_blank(), axis.line = element_line(colour = "black")) +
+  xlab(expression(Log[2]~(count + 1))) +
+  ylab("Density")
+```
+
+Based on these results it is evident that the difference between the TMM and DESeq standardization methods are very small. Thus, testing both methods, is actually unnecessary. It is also evident that the difference between the raw standardized couts are very similar thus, the effect of standardization is to be determined.
+
+##################################################################################################################################################
+# DATASETS PREPARATION
+##################################################################################################################################################
+
+## Functions
+
+```{r}
+discrtze <- function(count) {
+  discrete <- round(count, digits = 0)
+  return(discrete)
+} 
+```
+
+## Prepare count tables
+#### Raw
+
+```{r}
+### raw
+raw_ge_data_t <- raw_ge_data_x %>%
+  pivot_longer(-symbol) %>% # Transpose
+  pivot_wider(names_from=symbol, values_from=value) %>% 
+  mutate(name = str_replace(name, "X","")) %>% # remove "X"'s
+  mutate(name = as.numeric(name)) %>%
+  rename(sample_id = name)
+raw_ge_data_t
+### normalized
+ge_data_norm_t <- raw_ge_data_x %>%
+  pivot_longer(-symbol) %>%
+  mutate(counts = log2(value+1)) %>%
+  select(-c(value)) %>%
+  pivot_wider(names_from=symbol, values_from=counts) %>%
+  mutate(name = str_replace(name, "X","")) %>% # remove "X"'s
+  mutate(name = as.numeric(name)) %>%
+  rename(sample_id = name)
+ge_data_norm_t
+```
+
+## Developmental set (0-6) GC6-74 
+```{r}
+# select the 0-6 month training samples from each count table
+## Raw
+ge_raw_6 <- inner_join(cc_6, raw_ge_data_t, by = "sample_id")
+ge_raw_6
+```
+
+## Set (0-12) GC6-74 
+```{r}
+# select the 0-6 month training samples from each count table
+## Raw
+ge_raw_12 <- inner_join(cc_12, raw_ge_data_t, by = "sample_id")
+ge_raw_12
+summary(cc_12)
+```
+
+## Set (0-18) GC6-74 
+```{r}
+# select the 0-6 month training samples from each count table
+## Raw
+ge_raw_18 <- inner_join(cc_18, raw_ge_data_t, by = "sample_id")
+ge_raw_18
+summary(cc_18)
+```
+
+## Set (0-24) GC6-74 
+```{r}
+# select the 0-6 month training samples from each count table
+## Raw
+ge_raw_24 <- inner_join(cc_24, raw_ge_data_t, by = "sample_id")
+ge_raw_24
+summary(cc_24)
+```
+
+```{r}
+# Write developmental tables
+#write_csv(ge_raw_6, "C:/Users/Daniel/Google Drive/Postgraduate/Thesis/Method Development/Developmental sets/ge_raw_6.csv", na="NA", col_names = TRUE)
+#write_csv(ge_raw_12, "C:/Users/Daniel/Google Drive/Postgraduate/Thesis/Method Development/Developmental sets/ge_raw_12.csv", na="NA", col_names = TRUE)
+#write_csv(ge_raw_18, "C:/Users/Daniel/Google Drive/Postgraduate/Thesis/Method Development/Developmental sets/ge_raw_18.csv", na="NA", col_names = TRUE)
+#write_csv(ge_raw_24, "C:/Users/Daniel/Google Drive/Postgraduate/Thesis/Method Development/Developmental sets/ge_raw_24.csv", na="NA", col_names = TRUE)
+
+```
+
+### Train vs Test Comparison
+#### Raw
+
+```{r}
+# split train and test count data
+ge_raw_6_train <- ge_raw_6 %>%
+  group_by(label, before_diagnosis_group, site) %>% # any number of variables you wish to partition by proportionally
+  sample_frac(.9) # '.9' is the proportion of the original df you wish to sample
+
+ge_raw_6_test <- anti_join(ge_raw_6, ge_raw_6_train) # creates test dataframe with those observations not in 'train.'
+ge_raw_6_test
+# prepare count tables
+## train
+count_raw_6_train <- ge_raw_6_train %>%
+  ungroup() %>%
+  select(-c(n, subject_id:before_diagnosis_group)) %>%
+  pivot_longer(-sample_id) %>%
+  pivot_wider(names_from = sample_id, values_from = value) %>%
+  rename(symbol = name)
+count_raw_6_train
+
+##test
+count_raw_6_test <- ge_raw_6_test %>%
+  ungroup() %>%
+  select(-c(n, subject_id:before_diagnosis_group)) %>%
+  pivot_longer(-sample_id) %>%
+  pivot_wider(names_from = sample_id, values_from = value) %>%
+  rename(symbol = name)
+count_raw_6_test
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
